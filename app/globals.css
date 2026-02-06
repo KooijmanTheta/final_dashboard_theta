@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 209 61% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 9% 46%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 209 51% 48%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 209 61% 30%;
+  --radius: 0.5rem;
+
+  /* Theta Capital Design Tokens */
+  --navy-primary: #0A1628;
+  --navy-secondary: #0F2744;
+  --blue-accent: #1E4B7A;
+  --blue-light: #3D7AB8;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-tertiary: #6B7280;
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --error: #EF4444;
+}
+
+.dark {
+  --background: 222 47% 11%;
+  --foreground: 220 14% 96%;
+  --card: 222 47% 11%;
+  --card-foreground: 220 14% 96%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 220 14% 96%;
+  --primary: 220 14% 96%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 220 14% 96%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 17%;
+  --accent-foreground: 220 14% 96%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 220 14% 96%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 224 76% 48%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Utility classes for financial data */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* MOIC Bucket Colors */
+.moic-grand-slam {
+  @apply bg-emerald-900 text-emerald-50;
+}
+.moic-home-run {
+  @apply bg-emerald-700 text-emerald-50;
+}
+.moic-strong {
+  @apply bg-emerald-500 text-white;
+}
+.moic-solid {
+  @apply bg-green-300 text-green-900;
+}
+.moic-modest {
+  @apply bg-green-100 text-green-800;
+}
+.moic-at-cost {
+  @apply bg-gray-100 text-gray-700;
+}
+.moic-loss {
+  @apply bg-red-100 text-red-800;
+}
+.moic-loss-severe {
+  @apply bg-red-700 text-red-50;
+}
+.moic-write-off {
+  @apply bg-red-900 text-red-100;
+}
+.moic-missing {
+  @apply bg-gray-200 text-gray-600;
+}
