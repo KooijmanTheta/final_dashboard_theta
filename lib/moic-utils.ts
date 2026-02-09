@@ -3,6 +3,17 @@
  */
 
 /**
+ * Calculate MOIC safely, handling zero/negative cost edge cases.
+ * Returns Infinity when cost <= 0 but MV > 0 (formatMOIC renders as ∞).
+ * Returns 0 when both cost and MV are zero or MV is zero.
+ */
+export function calculateMOIC(totalMV: number, cost: number): number {
+  if (cost > 0) return totalMV / cost;
+  if (totalMV > 0) return Infinity;
+  return 0;
+}
+
+/**
  * Get MOIC bucket for color coding
  */
 export function getMOICBucket(moic: number | null | undefined): string {

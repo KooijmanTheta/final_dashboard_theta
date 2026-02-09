@@ -99,6 +99,16 @@ export function FundMonitoringContent() {
             onPersonClick={handlePersonClick}
           />
         </div>
+        <div className={tab !== 'data-quality' ? 'hidden' : ''}>
+          <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center">
+            <p className="text-[#6B7280] text-sm">Data Quality checks will appear here.</p>
+          </div>
+        </div>
+        <div className={tab !== 'bas' ? 'hidden' : ''}>
+          <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center">
+            <p className="text-[#6B7280] text-sm">Bas&apos;s personal workspace will appear here.</p>
+          </div>
+        </div>
       </main>
       <ProjectCard
         projectId={selectedProjectId || ''}

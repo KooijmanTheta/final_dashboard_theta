@@ -1,54 +1,39 @@
-import { ComingSoonCard } from '@/components/dashboard/coming-soon-card';
+import { Suspense } from 'react';
+import { HomepageContent } from '@/components/homepage/homepage-content';
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen bg-[#F9FAFB]">
+      <div className="bg-white border-b border-[#E5E7EB] h-14" />
+      <main className="max-w-[1200px] mx-auto px-6 py-16">
+        <div className="flex flex-col items-center text-center mb-12">
+          <div className="h-[60px] w-[180px] bg-gray-200 rounded animate-pulse mb-4" />
+          <div className="h-4 w-48 bg-gray-200 rounded animate-pulse mb-4" />
+          <div className="h-7 w-64 bg-gray-200 rounded animate-pulse mb-1" />
+          <div className="h-4 w-40 bg-gray-200 rounded animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="bg-white rounded-lg border border-[#E5E7EB] p-6"
+            >
+              <div className="w-10 h-10 bg-gray-200 rounded-lg animate-pulse mb-4" />
+              <div className="h-5 w-32 bg-gray-200 rounded animate-pulse mb-2" />
+              <div className="h-4 w-full bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="h-10 w-24 bg-gray-200 rounded animate-pulse" />
+            </div>
+          ))}
+        </div>
+      </main>
+    </div>
+  );
+}
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-[#F9FAFB]">
-      {/* Simple Header */}
-      <header className="bg-white border-b border-[#E5E7EB]">
-        <div className="flex items-center justify-between px-6 h-14">
-          <div className="flex items-center gap-8">
-            <div className="font-semibold text-[#1E4B7A] text-lg">
-              Theta Capital
-            </div>
-            <nav className="flex items-center gap-1">
-              <a
-                href="/homepage"
-                className="px-4 py-2 text-sm font-medium rounded-md bg-[#1E4B7A] text-white"
-              >
-                Homepage
-              </a>
-              <a
-                href="/fund-monitoring"
-                className="px-4 py-2 text-sm font-medium rounded-md text-[#374151] hover:bg-[#F9FAFB]"
-              >
-                Fund Monitoring
-              </a>
-              <a
-                href="/idd"
-                className="px-4 py-2 text-sm font-medium rounded-md text-[#374151] hover:bg-[#F9FAFB]"
-              >
-                IDD
-              </a>
-              <a
-                href="/odd"
-                className="px-4 py-2 text-sm font-medium rounded-md text-[#374151] hover:bg-[#F9FAFB]"
-              >
-                ODD
-              </a>
-            </nav>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-[#1E4B7A] text-white flex items-center justify-center text-sm font-medium">
-            TC
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-[1600px] mx-auto px-6 py-6">
-        <ComingSoonCard
-          title="Homepage"
-          description="The main dashboard homepage with portfolio overview and key metrics will be available here."
-        />
-      </main>
-    </div>
+    <Suspense fallback={<LoadingFallback />}>
+      <HomepageContent />
+    </Suspense>
   );
 }

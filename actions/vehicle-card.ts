@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { calculateMOIC } from '@/lib/moic-utils';
 
 // Helper to convert PostgreSQL numeric strings to numbers
 function toNumber(val: unknown): number {
@@ -352,7 +353,7 @@ export async function getTopPositions(
       asset_class: row.asset_class || 'Unknown',
       cost: toNumber(row.cost),
       market_value: toNumber(row.market_value),
-      moic: toNumber(row.cost) > 0 ? toNumber(row.market_value) / toNumber(row.cost) : 0,
+      moic: calculateMOIC(toNumber(row.market_value), toNumber(row.cost)),
     }));
   } catch (error) {
     console.error('Error fetching top positions:', error);

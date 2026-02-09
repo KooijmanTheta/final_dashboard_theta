@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { calculateMOIC } from '@/lib/moic-utils';
 
 // Helper to convert PostgreSQL numeric strings to numbers
 function toNumber(val: unknown): number {
@@ -267,7 +268,7 @@ export async function getProjectTBVCostMV(
             unrealized_mv: unrealizedMV,
             realized_mv: realizedMV,
             total_mv: totalMV,
-            moic: cost > 0 ? totalMV / cost : 0,
+            moic: calculateMOIC(totalMV, cost),
           });
         }
 
@@ -286,7 +287,7 @@ export async function getProjectTBVCostMV(
           unrealized_mv: fundUnrealizedMV,
           realized_mv: fundRealizedMV,
           total_mv: fundTotalMV,
-          moic: fundCost > 0 ? fundTotalMV / fundCost : 0,
+          moic: calculateMOIC(fundTotalMV, fundCost),
           asset_classes: assetClassRows,
         });
       }
@@ -307,7 +308,7 @@ export async function getProjectTBVCostMV(
         unrealized_mv: totalUnrealizedMV,
         realized_mv: totalRealizedMV,
         total_mv: totalTotalMV,
-        moic: totalCost > 0 ? totalTotalMV / totalCost : 0,
+        moic: calculateMOIC(totalTotalMV, totalCost),
       },
     };
   } catch (error) {
@@ -403,7 +404,7 @@ export async function getProjectFundExposure(
           fund_name: fundName,
           cost,
           market_value: marketValue,
-          moic: cost > 0 ? marketValue / cost : 0,
+          moic: calculateMOIC(marketValue, cost),
         });
       }
     }

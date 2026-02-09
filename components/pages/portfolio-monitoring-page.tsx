@@ -19,7 +19,7 @@ import {
   type TopCostRow,
   type TopCostProjectRow,
 } from '@/actions/portfolio-monitoring';
-import { getMOICColorClass } from '@/lib/moic-utils';
+import { getMOICColorClass, calculateMOIC } from '@/lib/moic-utils';
 import { cn } from '@/lib/utils';
 import { NotesSection as NotesSectionComponent } from '@/components/notes/notes-section';
 import { ExcludedPositionsTable } from '@/components/dashboard/excluded-positions-table';
@@ -329,7 +329,7 @@ function TopMVTable({
     }),
     { cost: 0, unrealized_mv: 0, realized_mv: 0, total_mv: 0 }
   ), [data]);
-  const totalMOIC = totals.cost > 0 ? totals.total_mv / totals.cost : 0;
+  const totalMOIC = calculateMOIC(totals.total_mv, totals.cost);
 
   return (
     <div className="bg-white rounded-lg border border-[#E5E7EB]">

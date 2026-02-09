@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { calculateMOIC } from '@/lib/moic-utils';
 
 // Helper function to convert SQL values to numbers (handles string returns from PostgreSQL)
 function toNumber(value: unknown): number {
@@ -232,7 +233,7 @@ export async function getProjectCategorySummary(
       const realizedMV = row.realized_mv || 0;
       const unrealizedMV = row.unrealized_mv || 0;
       const totalMV = realizedMV + unrealizedMV;
-      const moic = cost > 0 ? totalMV / cost : 0;
+      const moic = calculateMOIC(totalMV, cost);
 
       return {
         category: row.category || 'Uncategorized',
@@ -421,7 +422,7 @@ export async function getMOICBuckets(
       const unrealizedTotal = toNumber(row.unrealized_total);
       const realizedTotal = toNumber(row.realized_total);
       const totalMV = unrealizedTotal + realizedTotal;
-      const moic = costTotal > 0 ? totalMV / costTotal : 0;
+      const moic = calculateMOIC(totalMV, costTotal);
 
       return {
         bucket: row.bucket,
@@ -767,7 +768,7 @@ export async function getAssetTypeBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -783,7 +784,7 @@ export async function getAssetTypeBreakdown(
         unrealized_mv: equitySummary.unrealized_mv,
         realized_mv: equitySummary.realized_mv,
         total_mv: totalMV,
-        moic: equitySummary.cost > 0 ? totalMV / equitySummary.cost : 0,
+        moic: calculateMOIC(totalMV, equitySummary.cost),
       });
     }
 
@@ -811,7 +812,7 @@ export async function getAssetTypeBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -827,7 +828,7 @@ export async function getAssetTypeBreakdown(
         unrealized_mv: tokenSummary.unrealized_mv,
         realized_mv: tokenSummary.realized_mv,
         total_mv: totalMV,
-        moic: tokenSummary.cost > 0 ? totalMV / tokenSummary.cost : 0,
+        moic: calculateMOIC(totalMV, tokenSummary.cost),
       });
     }
 
@@ -847,7 +848,7 @@ export async function getAssetTypeBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -862,7 +863,7 @@ export async function getAssetTypeBreakdown(
       unrealized_mv: grandTotal.total_unrealized_mv,
       realized_mv: grandTotal.total_realized_mv,
       total_mv: grandTotalMV,
-      moic: grandTotal.total_cost > 0 ? grandTotalMV / grandTotal.total_cost : 0,
+      moic: calculateMOIC(grandTotalMV, grandTotal.total_cost),
     });
 
     console.log(`Asset type breakdown fetched for: ${vehicleId}, rows: ${rows.length}, total projects: ${totalProjects}, total cost: ${grandTotal.total_cost}, total MV: ${grandTotalMV}, MOIC: ${grandTotal.total_cost > 0 ? (grandTotalMV / grandTotal.total_cost).toFixed(2) : 0}`);
@@ -1075,7 +1076,7 @@ export async function getValuationBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -1090,7 +1091,7 @@ export async function getValuationBreakdown(
         unrealized_mv: earlySummary.unrealized_mv,
         realized_mv: earlySummary.realized_mv,
         total_mv: totalMV,
-        moic: earlySummary.cost > 0 ? totalMV / earlySummary.cost : 0,
+        moic: calculateMOIC(totalMV, earlySummary.cost),
       });
     }
 
@@ -1117,7 +1118,7 @@ export async function getValuationBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -1132,7 +1133,7 @@ export async function getValuationBreakdown(
         unrealized_mv: midSummary.unrealized_mv,
         realized_mv: midSummary.realized_mv,
         total_mv: totalMV,
-        moic: midSummary.cost > 0 ? totalMV / midSummary.cost : 0,
+        moic: calculateMOIC(totalMV, midSummary.cost),
       });
     }
 
@@ -1159,7 +1160,7 @@ export async function getValuationBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -1174,7 +1175,7 @@ export async function getValuationBreakdown(
         unrealized_mv: lateSummary.unrealized_mv,
         realized_mv: lateSummary.realized_mv,
         total_mv: totalMV,
-        moic: lateSummary.cost > 0 ? totalMV / lateSummary.cost : 0,
+        moic: calculateMOIC(totalMV, lateSummary.cost),
       });
     }
 
@@ -1194,7 +1195,7 @@ export async function getValuationBreakdown(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       });
     });
 
@@ -1209,7 +1210,7 @@ export async function getValuationBreakdown(
       unrealized_mv: grandTotal.total_unrealized_mv,
       realized_mv: grandTotal.total_realized_mv,
       total_mv: grandTotalMV,
-      moic: grandTotal.total_cost > 0 ? grandTotalMV / grandTotal.total_cost : 0,
+      moic: calculateMOIC(grandTotalMV, grandTotal.total_cost),
     });
 
     console.log(`Valuation breakdown fetched for: ${vehicleId}, rows: ${rows.length}, total projects: ${totalProjects}, total cost: ${grandTotal.total_cost}, total MV: ${grandTotalMV}, MOIC: ${grandTotal.total_cost > 0 ? (grandTotalMV / grandTotal.total_cost).toFixed(2) : 0}`);
@@ -1318,7 +1319,7 @@ export async function getCategoryProjects(
         realized_mv: realizedMV,
         unrealized_mv: unrealizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       };
     });
   } catch (error) {
@@ -1439,7 +1440,7 @@ export async function getAssetTypeProjects(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       };
     });
   } catch (error) {
@@ -1562,7 +1563,7 @@ export async function getValuationStageProjects(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       };
     });
   } catch (error) {

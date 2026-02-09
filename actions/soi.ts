@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { calculateMOIC } from '@/lib/moic-utils';
 
 // Helper to convert PostgreSQL numeric strings to numbers
 function toNumber(val: unknown): number {
@@ -252,7 +253,7 @@ export async function getSOIData(
     const totalRealizedMV = result.reduce((sum, r) => sum + toNumber(r.realized_mv), 0);
     const totalUnrealizedMV = result.reduce((sum, r) => sum + toNumber(r.unrealized_mv), 0);
     const totalMV = totalRealizedMV + totalUnrealizedMV;
-    const portfolioMOIC = totalCost > 0 ? totalMV / totalCost : 0;
+    const portfolioMOIC = calculateMOIC(totalMV, totalCost);
     const portfolioITD = totalCost > 0 ? (totalMV - totalCost) / totalCost : 0;
 
     // Process rows and identify high MOIC exceptions
@@ -261,7 +262,7 @@ export async function getSOIData(
       const realizedMV = toNumber(row.realized_mv);
       const unrealizedMV = toNumber(row.unrealized_mv);
       const rowTotalMV = realizedMV + unrealizedMV;
-      const moic = cost > 0 ? rowTotalMV / cost : 0;
+      const moic = calculateMOIC(rowTotalMV, cost);
 
       // New ITD calculation with additive base:
       // ITD = (Current Total MV / (First Total MV + Additional Cost Since First MV Date)) - 1
@@ -338,7 +339,7 @@ export async function getSOIData(
         const ltRealizedMV = longTailRows.reduce((sum, r) => sum + r.realized_mv, 0);
         const ltUnrealizedMV = longTailRows.reduce((sum, r) => sum + r.unrealized_mv, 0);
         const ltTotalMV = ltRealizedMV + ltUnrealizedMV;
-        const ltMOIC = ltCost > 0 ? ltTotalMV / ltCost : 0;
+        const ltMOIC = calculateMOIC(ltTotalMV, ltCost);
 
         // ITD: weighted average by total_mv for positions with ITD values
         const ltITDPositions = longTailRows.filter(r => r.itd_individual !== null);
@@ -514,7 +515,7 @@ export async function getSOIAssetBreakdown(
         realized_mv: realizedMV,
         unrealized_mv: unrealizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       };
     });
   } catch (error) {

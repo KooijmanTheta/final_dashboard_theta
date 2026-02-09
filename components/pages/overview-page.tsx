@@ -24,6 +24,7 @@ import {
   type CategoryProjectRow,
 } from '@/actions/overview';
 import { cn } from '@/lib/utils';
+import { calculateMOIC } from '@/lib/moic-utils';
 import { NotesSection as NotesSectionComponent } from '@/components/notes/notes-section';
 import { ExcludedPositionsTable } from '@/components/dashboard/excluded-positions-table';
 
@@ -155,7 +156,7 @@ function CategorySummaryTable({
     { project_count: 0, cost: 0, realized_mv: 0, unrealized_mv: 0 }
   ), [data]);
   const totalMV = totals.realized_mv + totals.unrealized_mv;
-  const totalMOIC = totals.cost > 0 ? totalMV / totals.cost : 0;
+  const totalMOIC = calculateMOIC(totalMV, totals.cost);
 
   return (
     <div className="bg-white rounded-lg border border-[#E5E7EB]">
@@ -191,7 +192,7 @@ function CategorySummaryTable({
               const realizedMv = toNumber(row.realized_mv);
               const unrealizedMv = toNumber(row.unrealized_mv);
               const rowTotalMV = realizedMv + unrealizedMv;
-              const rowMOIC = cost > 0 ? rowTotalMV / cost : 0;
+              const rowMOIC = calculateMOIC(rowTotalMV, cost);
               const costPct = toNumber(row.cost_percentage);
               const isExpanded = expandedCategories[row.category];
               const projects = categoryProjects[row.category] || [];
@@ -537,7 +538,7 @@ function MOICBucketsTable({
                 {formatCurrency(totals.unrealized_total + totals.realized_total)}
               </td>
               <td className="px-4 py-3 text-sm text-right font-mono tabular-nums">
-                {formatMOIC(totals.cost_total > 0 ? (totals.unrealized_total + totals.realized_total) / totals.cost_total : 0)}
+                {formatMOIC(calculateMOIC(totals.unrealized_total + totals.realized_total, totals.cost_total))}
               </td>
             </tr>
           </tfoot>

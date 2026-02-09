@@ -10,7 +10,7 @@ export const filterParsers = {
   portfolioDate: parseAsString.withDefault(''),
   dateReportedStart: parseAsString.withDefault(''),
   dateReportedEnd: parseAsString.withDefault(''),
-  tab: parseAsStringLiteral(['general', 'overview', 'historical', 'portfolio', 'soi', 'team'] as const).withDefault('general' as Tab),
+  tab: parseAsStringLiteral(['general', 'overview', 'historical', 'portfolio', 'soi', 'team', 'data-quality', 'bas'] as const).withDefault('general' as Tab),
 };
 
 export function useFilterState() {

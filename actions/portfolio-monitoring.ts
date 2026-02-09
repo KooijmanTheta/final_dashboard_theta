@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { calculateMOIC } from '@/lib/moic-utils';
 
 // Helper to convert PostgreSQL numeric strings to numbers
 function toNumber(val: unknown): number {
@@ -426,7 +427,7 @@ export async function getTopMVPositions(
       const unrealizedMV = toNumber(row.unrealized_mv);
       const realizedMV = toNumber(row.realized_mv);
       const mvTotal = toNumber(row.total_mv);
-      const moic = cost > 0 ? mvTotal / cost : 0;
+      const moic = calculateMOIC(mvTotal, cost);
 
       let qtdLineItem: number | null = null;
       let qtdWeighted: number | null = null;
@@ -526,7 +527,7 @@ export async function getTopMVProjectDetails(
         unrealized_mv: unrealizedMV,
         realized_mv: realizedMV,
         total_mv: totalMV,
-        moic: cost > 0 ? totalMV / cost : 0,
+        moic: calculateMOIC(totalMV, cost),
       };
     });
   } catch (error) {

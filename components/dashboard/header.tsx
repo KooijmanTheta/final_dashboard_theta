@@ -8,13 +8,15 @@ import { useFilterState } from '@/hooks/use-url-state';
 import type { Tab } from '@/lib/types';
 import { LogOut } from 'lucide-react';
 
-const tabs: { id: Tab; label: string }[] = [
+const baseTabs: { id: Tab; label: string; visibleTo?: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'overview', label: 'Overview' },
   { id: 'historical', label: 'Historical Changes' },
   { id: 'portfolio', label: 'Portfolio Monitoring' },
   { id: 'soi', label: 'Schedule of Investments' },
   { id: 'team', label: 'Team' },
+  { id: 'data-quality', label: 'Data Quality' },
+  { id: 'bas', label: 'Bas', visibleTo: 'bas' },
 ];
 
 const navLinks = [
@@ -45,9 +47,24 @@ export function Header() {
     router.push('/login');
   };
 
-  const initials = username
-    ? username.slice(0, 2).toUpperCase()
+  const displayName = username
+    ? username
+        .split(' ')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ')
+    : '';
+  const initials = displayName
+    ? displayName
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
     : 'TC';
+
+  const tabs = baseTabs.filter(
+    (t) => !t.visibleTo || t.visibleTo === username.toLowerCase()
+  );
 
   const handleTabChange = (newTab: Tab) => {
     setFilters({ tab: newTab });
@@ -87,8 +104,8 @@ export function Header() {
           <div className="w-8 h-8 rounded-full bg-[#1E4B7A] text-white flex items-center justify-center text-sm font-medium">
             {initials}
           </div>
-          {username && (
-            <span className="text-sm text-[#374151] font-medium capitalize">{username}</span>
+          {displayName && (
+            <span className="text-sm text-[#374151] font-medium">{displayName}</span>
           )}
           <button
             onClick={handleLogout}
