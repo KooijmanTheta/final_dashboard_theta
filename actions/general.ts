@@ -44,6 +44,29 @@ export interface GeneralNotes {
   last_review_conclusion: string | null;
 }
 
+export interface FundKPIs {
+  total_committed: number;
+  total_called: number;
+  uncalled_capital: number;
+  total_distributed: number;
+  dpi: number;
+  called_pct: number;
+}
+
+export interface CapitalDeploymentPoint {
+  flow_date: string;
+  cumulative_called: number;
+  cumulative_distributed: number;
+}
+
+export interface VehicleCardData {
+  vehicle_id: string;
+  full_strategy_name: string | null;
+  vintage: number | null;
+  kpis: FundKPIs;
+  timeline: CapitalDeploymentPoint[];
+}
+
 export interface InvestmentPeriodRange {
   start_date: string | null;
   end_date: string | null;
@@ -319,5 +342,160 @@ export async function getVehicleRecordIds(vehicleId: string): Promise<VehicleRec
   } catch (error) {
     console.error('Error fetching vehicle record IDs:', error);
     return { record_id_vehicle_universe: null, record_id_fund_universe: null };
+  }
+}
+
+/**
+ * Aggregate KPI metrics across all TBV funds for a vehicle
+ */
+export async function getFundKPIs(
+  vehicleId: string,
+  dateOfReview: string
+): Promise<FundKPIs> {
+  try {
+    const flowsResult = await sql<{
+      flow_type: string;
+      total_amount: number;
+    }[]>`
+      SELECT
+        flow_type,
+        SUM(flow_amount) as total_amount
+      FROM at_tables.at_flows_db
+      WHERE vehicle_id = ${vehicleId}
+        AND flow_date <= ${dateOfReview}::date
+      GROUP BY flow_type
+    `;
+
+    let committed = 0;
+    let called = 0;
+    let distributed = 0;
+
+    for (const flow of flowsResult) {
+      const ft = flow.flow_type?.toLowerCase() || '';
+      if (ft === 'commitment') {
+        committed += Math.abs(flow.total_amount || 0);
+      } else if (ft === 'capital called' || ft === 'capital_called') {
+        called += Math.abs(flow.total_amount || 0);
+      } else if (ft === 'distribution' || ft === 'capital return' || ft === 'capital_return') {
+        distributed += Math.abs(flow.total_amount || 0);
+      }
+    }
+
+    return {
+      total_committed: committed,
+      total_called: called,
+      uncalled_capital: committed - called,
+      total_distributed: distributed,
+      dpi: committed > 0 ? distributed / committed : 0,
+      called_pct: committed > 0 ? called / committed : 0,
+    };
+  } catch (error) {
+    console.error('Error fetching fund KPIs:', error);
+    return {
+      total_committed: 0,
+      total_called: 0,
+      uncalled_capital: 0,
+      total_distributed: 0,
+      dpi: 0,
+      called_pct: 0,
+    };
+  }
+}
+
+/**
+ * Capital deployment timeline — cumulative called & distributed over time
+ */
+export async function getCapitalDeploymentTimeline(
+  vehicleId: string
+): Promise<CapitalDeploymentPoint[]> {
+  try {
+    const rows = await sql<{
+      flow_date: string;
+      flow_type: string;
+      flow_amount: number;
+    }[]>`
+      SELECT
+        flow_date::text as flow_date,
+        flow_type,
+        flow_amount
+      FROM at_tables.at_flows_db
+      WHERE vehicle_id = ${vehicleId}
+      ORDER BY flow_date ASC
+    `;
+
+    let cumCalled = 0;
+    let cumDistributed = 0;
+    const pointsMap = new Map<string, { cumulative_called: number; cumulative_distributed: number }>();
+
+    for (const row of rows) {
+      const ft = row.flow_type?.toLowerCase() || '';
+      if (ft === 'capital called' || ft === 'capital_called') {
+        cumCalled += Math.abs(row.flow_amount || 0);
+      } else if (ft === 'distribution' || ft === 'capital return' || ft === 'capital_return') {
+        cumDistributed += Math.abs(row.flow_amount || 0);
+      } else {
+        continue; // skip commitment rows — they don't affect deployment chart
+      }
+      pointsMap.set(row.flow_date, {
+        cumulative_called: cumCalled,
+        cumulative_distributed: cumDistributed,
+      });
+    }
+
+    return Array.from(pointsMap.entries()).map(([date, vals]) => ({
+      flow_date: date,
+      ...vals,
+    }));
+  } catch (error) {
+    console.error('Error fetching capital deployment timeline:', error);
+    return [];
+  }
+}
+
+/**
+ * Get card data (KPIs + timeline) for all vehicles under a fund manager
+ */
+export async function getVehicleCardData(
+  fundManagerId: string,
+  dateOfReview: string
+): Promise<VehicleCardData[]> {
+  try {
+    const vehicles = await sql<{
+      vehicle_id: string;
+      full_strategy_name: string | null;
+      vintage: number | null;
+    }[]>`
+      SELECT DISTINCT
+        v.vehicle_id,
+        v.full_strategy_name,
+        v.vintage
+      FROM at_tables.at_investment_names_db i
+      JOIN at_tables.at_vehicle_universe_db v ON i.vehicle_id = v.vehicle_id
+      WHERE i.fund_id = ${fundManagerId}
+      ORDER BY v.vintage DESC NULLS LAST
+    `;
+
+    if (vehicles.length === 0) return [];
+
+    const results = await Promise.all(
+      vehicles.map(async (v) => {
+        const [kpis, timeline] = await Promise.all([
+          getFundKPIs(v.vehicle_id, dateOfReview),
+          getCapitalDeploymentTimeline(v.vehicle_id),
+        ]);
+        return {
+          vehicle_id: v.vehicle_id,
+          full_strategy_name: v.full_strategy_name,
+          vintage: v.vintage,
+          kpis,
+          timeline,
+        };
+      })
+    );
+
+    return results;
+  } catch (error) {
+    console.error('Error fetching vehicle card data:', error);
+    return [];
   }
 }
