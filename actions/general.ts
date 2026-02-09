@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import logoMapping from '@/public/logos/_mapping.json';
 
 // TypeScript interfaces per specification
 export interface GeneralManagerInfo {
@@ -70,7 +71,12 @@ export async function getGeneralManagerInfo(fundManagerId: string): Promise<Gene
       LIMIT 1
     `;
     console.log('Manager info fetched for:', fundManagerId, result.length > 0 ? 'found' : 'not found');
-    return result[0] || null;
+    const row = result[0] || null;
+    if (row) {
+      const localLogos = logoMapping as Record<string, string>;
+      row.logo_url = localLogos[fundManagerId] ?? row.logo_url;
+    }
+    return row;
   } catch (error) {
     console.error('Error fetching manager info:', error);
     return null;

@@ -11,6 +11,8 @@ import { HistoricalPage } from '@/components/pages/historical-page';
 import { PortfolioMonitoringPage } from '@/components/pages/portfolio-monitoring-page';
 import { SOIPage } from '@/components/pages/soi-page';
 import { TeamPage } from '@/components/pages/team-page';
+import { DataQualityPage } from '@/components/pages/data-quality-page';
+import { FundManagerMonitoringPage } from '@/components/pages/fund-manager-monitoring-page';
 import { DataConnectionFooter } from '@/components/dashboard/data-connection-footer';
 
 const ProjectCard = dynamic(() => import('@/components/dashboard/project-card').then(m => ({ default: m.ProjectCard })), { ssr: false });
@@ -99,10 +101,14 @@ export function FundMonitoringContent() {
             onPersonClick={handlePersonClick}
           />
         </div>
+        <div className={tab !== 'fm-monitoring' ? 'hidden' : ''}>
+          <FundManagerMonitoringPage />
+        </div>
         <div className={tab !== 'data-quality' ? 'hidden' : ''}>
-          <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center">
-            <p className="text-[#6B7280] text-sm">Data Quality checks will appear here.</p>
-          </div>
+          <DataQualityPage
+            vehicleId={filters.vehicleId}
+            portfolioDate={filters.portfolioDate}
+          />
         </div>
         <div className={tab !== 'bas' ? 'hidden' : ''}>
           <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center">

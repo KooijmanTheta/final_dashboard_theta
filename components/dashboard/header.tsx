@@ -15,6 +15,7 @@ const baseTabs: { id: Tab; label: string; visibleTo?: string }[] = [
   { id: 'portfolio', label: 'Portfolio Monitoring' },
   { id: 'soi', label: 'Schedule of Investments' },
   { id: 'team', label: 'Team' },
+  { id: 'fm-monitoring', label: 'FM Monitoring' },
   { id: 'data-quality', label: 'Data Quality' },
   { id: 'bas', label: 'Bas', visibleTo: 'bas' },
 ];

@@ -155,7 +155,7 @@ export interface HistoricalPeriod {
 }
 
 // Tab Navigation Types
-export type Tab = 'general' | 'overview' | 'historical' | 'portfolio' | 'soi' | 'team' | 'data-quality' | 'bas';
+export type Tab = 'general' | 'overview' | 'historical' | 'portfolio' | 'soi' | 'team' | 'fm-monitoring' | 'data-quality' | 'bas';
 
 // Filter State Types
 export interface FilterState {
