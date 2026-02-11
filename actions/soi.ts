@@ -27,6 +27,7 @@ export interface SOIRow {
   unrealized_mv: number;
   unrealized_mv_percentage: number;
   total_mv: number;
+  pnl: number;
   moic: number;
   first_entry: number | null;
   weighted_valuation: number | null;
@@ -56,6 +57,7 @@ export interface SOISummary {
   total_realized_mv: number;
   total_unrealized_mv: number;
   total_mv: number;
+  total_pnl: number;
   portfolio_moic: number;
   portfolio_itd: number;
   portfolio_qtd: number | null;
@@ -300,6 +302,7 @@ export async function getSOIData(
         unrealized_mv: unrealizedMV,
         unrealized_mv_percentage: totalUnrealizedMV > 0 ? (unrealizedMV / totalUnrealizedMV) * 100 : 0,
         total_mv: rowTotalMV,
+        pnl: rowTotalMV - cost,
         moic,
         first_entry: row.first_entry ? toNumber(row.first_entry) : null,
         weighted_valuation: row.weighted_valuation ? toNumber(row.weighted_valuation) : null,
@@ -367,6 +370,7 @@ export async function getSOIData(
           unrealized_mv: ltUnrealizedMV,
           unrealized_mv_percentage: totalUnrealizedMV > 0 ? (ltUnrealizedMV / totalUnrealizedMV) * 100 : 0,
           total_mv: ltTotalMV,
+          pnl: ltTotalMV - ltCost,
           moic: ltMOIC,
           first_entry: ltFirstEntry,
           weighted_valuation: ltWeightedVal,
@@ -411,6 +415,7 @@ export async function getSOIData(
       total_realized_mv: totalRealizedMV,
       total_unrealized_mv: totalUnrealizedMV,
       total_mv: totalMV,
+      total_pnl: totalMV - totalCost,
       portfolio_moic: portfolioMOIC,
       portfolio_itd: portfolioITDNew,
       portfolio_qtd: portfolioQTD,
@@ -431,6 +436,7 @@ export async function getSOIData(
         total_realized_mv: 0,
         total_unrealized_mv: 0,
         total_mv: 0,
+        total_pnl: 0,
         portfolio_moic: 0,
         portfolio_itd: 0,
         portfolio_qtd: null,

@@ -62,7 +62,7 @@ function formatReturnPct(value: number | null | undefined): string {
 // Sorting
 // ============================================================================
 
-type SortField = 'project_id' | 'cost' | 'realized_mv' | 'unrealized_mv' | 'total_mv' | 'moic' | 'first_entry' | 'weighted_valuation' | 'itd_individual' | 'qtd_individual';
+type SortField = 'project_id' | 'cost' | 'realized_mv' | 'unrealized_mv' | 'total_mv' | 'pnl' | 'moic' | 'first_entry' | 'weighted_valuation' | 'itd_individual' | 'qtd_individual';
 type SortDirection = 'asc' | 'desc';
 
 interface SortConfig {
@@ -289,6 +289,9 @@ function ExpandableRow({
         <td className="px-4 py-3 text-sm text-right font-mono tabular-nums">
           {formatCurrency(row.total_mv)}
         </td>
+        <td className={cn('px-4 py-3 text-sm text-right font-mono tabular-nums', row.pnl >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+          {formatCurrency(row.pnl)}
+        </td>
         <td className="px-4 py-3 text-sm text-right">
           <span className={cn('px-2 py-1 rounded text-xs font-medium', getMOICColorClass(row.moic))}>
             {formatMOIC(row.moic)}
@@ -311,14 +314,14 @@ function ExpandableRow({
       {/* Asset class breakdown rows */}
       {isExpanded && isLoading && (
         <tr className="bg-[#FAFAFA]">
-          <td colSpan={11} className="px-6 py-2 text-sm text-[#6B7280] text-center">
+          <td colSpan={12} className="px-6 py-2 text-sm text-[#6B7280] text-center">
             Loading asset breakdown...
           </td>
         </tr>
       )}
       {isExpanded && !isLoading && assetData.length === 0 && (
         <tr className="bg-[#FAFAFA]">
-          <td colSpan={11} className="px-6 py-2 text-sm text-[#6B7280] text-center">
+          <td colSpan={12} className="px-6 py-2 text-sm text-[#6B7280] text-center">
             No asset breakdown available
           </td>
         </tr>
@@ -340,6 +343,9 @@ function ExpandableRow({
           </td>
           <td className="px-4 py-2 text-sm text-right font-mono tabular-nums text-[#6B7280]">
             {formatCurrency(asset.total_mv)}
+          </td>
+          <td className={cn('px-4 py-2 text-sm text-right font-mono tabular-nums', (asset.total_mv - asset.cost) >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+            {formatCurrency(asset.total_mv - asset.cost)}
           </td>
           <td className="px-4 py-2 text-sm text-right">
             <span className={cn('px-2 py-1 rounded text-xs font-medium', getMOICColorClass(asset.moic))}>
@@ -394,6 +400,7 @@ function SOITable({
               <SortableHeader label="Realized MV (%)" field="realized_mv" sortConfig={sortConfig} onSort={onSort} />
               <SortableHeader label="Unrealized MV (%)" field="unrealized_mv" sortConfig={sortConfig} onSort={onSort} />
               <SortableHeader label="Total MV" field="total_mv" sortConfig={sortConfig} onSort={onSort} />
+              <SortableHeader label="PNL" field="pnl" sortConfig={sortConfig} onSort={onSort} />
               <SortableHeader label="MOIC" field="moic" sortConfig={sortConfig} onSort={onSort} />
               <SortableHeader label="First Entry" field="first_entry" sortConfig={sortConfig} onSort={onSort} />
               <SortableHeader label="Wtd. Val." field="weighted_valuation" sortConfig={sortConfig} onSort={onSort} />
@@ -404,7 +411,7 @@ function SOITable({
           <tbody className="divide-y divide-[#F3F4F6]">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-6 py-8 text-center text-[#6B7280]">
+                <td colSpan={12} className="px-6 py-8 text-center text-[#6B7280]">
                   No positions found
                 </td>
               </tr>
@@ -448,6 +455,9 @@ function SOITable({
               </td>
               <td className="px-4 py-3 text-sm text-right font-mono tabular-nums">
                 {formatCurrency(summary.total_mv)}
+              </td>
+              <td className="px-4 py-3 text-sm text-right font-mono tabular-nums">
+                {formatCurrency(summary.total_pnl)}
               </td>
               <td className="px-4 py-3 text-sm text-right">
                 <span className="px-2 py-1 rounded text-xs font-medium bg-white/20">
@@ -524,6 +534,7 @@ export function SOIPage({ vehicleId, portfolioDate }: SOIPageProps) {
       total_realized_mv: 0,
       total_unrealized_mv: 0,
       total_mv: 0,
+      total_pnl: 0,
       portfolio_moic: 0,
       portfolio_itd: 0,
       portfolio_qtd: null,
