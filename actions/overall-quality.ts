@@ -107,6 +107,8 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
     offset = data.offset;
   } while (offset);
 
-  // Only include vehicles assigned to TBV1-TBV5
-  return allRecords.filter(r => r.tbvFunds.some(t => VALID_TBVS.has(t)));
+  // Only include vehicles assigned to TBV1-TBV5, and strip any non-valid TBVs
+  return allRecords
+    .map(r => ({ ...r, tbvFunds: r.tbvFunds.filter(t => VALID_TBVS.has(t)) }))
+    .filter(r => r.tbvFunds.length > 0);
 }
