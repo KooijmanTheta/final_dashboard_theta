@@ -39,47 +39,33 @@ export async function POST(req: NextRequest) {
 
   const responseUrl: string | undefined = payload.response_url;
 
-  // Acknowledge immediately — Slack needs a response within 3s
-  // Then use response_url to update the message (no timeout pressure)
-  if (responseUrl) {
-    // Fire off the update without awaiting — return 200 right away
-    updateMessageViaResponseUrl(responseUrl, filters).catch(err =>
-      console.error('Slack interaction update error:', err)
-    );
-    return new NextResponse('', { status: 200 });
-  }
+  try {
+    const overdueItems = await getOverdueItemsForSlack();
+    const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
 
-  // Fallback: if no response_url, try direct update before responding
-  const channel = payload.channel?.id;
-  const messageTs = payload.message?.ts;
-  if (channel && messageTs) {
-    const { updateBotMessage } = await import('@/lib/slack/client');
-    try {
-      const overdueItems = await getOverdueItemsForSlack();
-      const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
-      await updateBotMessage(channel, messageTs, blocks, 'Overdue Report');
-    } catch (err) {
-      console.error('Slack interaction handler error:', err);
+    if (responseUrl) {
+      // Use response_url to replace the original message
+      await fetch(responseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          replace_original: true,
+          blocks,
+          text: 'Overdue Report',
+        }),
+      });
+    } else {
+      // Fallback: direct API update
+      const { updateBotMessage } = await import('@/lib/slack/client');
+      const channel = payload.channel?.id;
+      const messageTs = payload.message?.ts;
+      if (channel && messageTs) {
+        await updateBotMessage(channel, messageTs, blocks, 'Overdue Report');
+      }
     }
+  } catch (err) {
+    console.error('Slack interaction handler error:', err);
   }
 
   return new NextResponse('', { status: 200 });
-}
-
-async function updateMessageViaResponseUrl(
-  responseUrl: string,
-  filters: { tbv: string; type: string; page: number },
-) {
-  const overdueItems = await getOverdueItemsForSlack();
-  const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
-
-  await fetch(responseUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      replace_original: true,
-      blocks,
-      text: 'Overdue Report',
-    }),
-  });
 }
