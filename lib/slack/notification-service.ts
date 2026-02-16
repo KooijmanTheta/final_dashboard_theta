@@ -414,6 +414,40 @@ export async function detectAndNotifyChanges(): Promise<{ received: number; stan
   return { received: receivedCount, standardized: standardizedCount, errors };
 }
 
+// ─── Seed snapshot baseline (no Slack messages) ─────────────────────────────
+
+export async function seedSnapshot(): Promise<{ seeded: number }> {
+  const records = await getMonitoringRecords();
+
+  const latestByVehicle = new Map<string, MonitoringRecord>();
+  for (const r of records) {
+    if (!r.vehicleId || !r.quarter) continue;
+    const key = `${r.vehicleId}|${r.quarter}`;
+    const existing = latestByVehicle.get(key);
+    if (!existing || r.dateMemo > existing.dateMemo) {
+      latestByVehicle.set(key, r);
+    }
+  }
+
+  let seeded = 0;
+  for (const [, rec] of latestByVehicle) {
+    await sql`
+      INSERT INTO tracking.monitoring_snapshot (vehicle_id, quarter, has_portfolio, has_standardized, has_financials, has_lp_update, snapshot_at)
+      VALUES (${rec.vehicleId}, ${rec.quarter}, ${rec.hasAnyPortfolio}, ${rec.hasStandardizedPortfolio}, ${rec.hasFinancials}, ${rec.hasLpUpdate}, NOW())
+      ON CONFLICT (vehicle_id, quarter)
+      DO UPDATE SET
+        has_portfolio = ${rec.hasAnyPortfolio},
+        has_standardized = ${rec.hasStandardizedPortfolio},
+        has_financials = ${rec.hasFinancials},
+        has_lp_update = ${rec.hasLpUpdate},
+        snapshot_at = NOW()
+    `;
+    seeded++;
+  }
+
+  return { seeded };
+}
+
 // ─── Query for UI ────────────────────────────────────────────────────────────
 
 export async function getNotificationsForVehicle(vehicleId: string, limit = 20) {
