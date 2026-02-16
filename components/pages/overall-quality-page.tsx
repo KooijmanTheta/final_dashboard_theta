@@ -13,16 +13,19 @@ import { cn } from '@/lib/utils';
 
 type CellStatus = 'Done' | "Recv'd" | 'LATE' | 'Expected' | 'N/A' | '-';
 
-const CYCLE_COLUMNS = ['Portfolio', 'LP Update', 'Financials', 'NAV', 'Cash Flows', 'Rounds'] as const;
+const CYCLE_COLUMNS = ['Portfolio', 'LP Letter', 'Financials'] as const;
+
+interface CellFraction {
+  missing: number;
+  total: number;
+  missingQuarters: string[]; // quarters that are missing the deliverable (for tooltip)
+}
 
 interface VehicleCycleRow {
   vehicleId: string;
-  portfolio: CellStatus;
-  lpUpdate: CellStatus;
-  financials: CellStatus;
-  nav: CellStatus;
-  cashFlows: CellStatus;
-  rounds: CellStatus;
+  portfolio: CellFraction;
+  lpLetter: CellFraction;
+  financials: CellFraction;
 }
 
 interface TbvCycleGroup {
@@ -99,6 +102,28 @@ function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Get the last N completed quarters from today (e.g. if today is Feb 2026, last 3 = Q1 2025, Q2 2025, Q3 2025) */
+function getLastNQuarters(n: number): string[] {
+  const now = new Date();
+  const currentMonth = now.getMonth(); // 0-based
+  const currentYear = now.getFullYear();
+  // Current quarter (1-based): Jan-Mar=1, Apr-Jun=2, Jul-Sep=3, Oct-Dec=4
+  const currentQ = Math.floor(currentMonth / 3) + 1;
+
+  const quarters: string[] = [];
+  let q = currentQ;
+  let y = currentYear;
+
+  // Go back from current quarter (current quarter is incomplete, start from previous)
+  for (let i = 0; i < n; i++) {
+    q--;
+    if (q === 0) { q = 4; y--; }
+    quarters.push(`Q${q} ${y}`);
+  }
+
+  return quarters.reverse(); // oldest first
+}
+
 interface DueDeliverable {
   dueDate: string;
   deliverable: string;
@@ -110,25 +135,29 @@ interface DueDeliverable {
 // Derive cell status from monitoring record
 // ============================================================================
 
-function deriveRow(vehicleId: string, latest: MonitoringRecord): VehicleCycleRow {
-  let portfolio: CellStatus = '-';
-  if (latest.hasStandardizedPortfolio) portfolio = 'Done';
-  else if (latest.hasAnyPortfolio) portfolio = "Recv'd";
+function deriveRow(vehicleId: string, allRecords: MonitoringRecord[]): VehicleCycleRow {
+  // Expected quarters = last 3 completed quarters based on today
+  const expectedQuarters = getLastNQuarters(3);
+  // Also include any quarters from records that aren't in the expected set
+  const recordQuarters = [...new Set(allRecords.map(r => r.quarter).filter(Boolean))];
+  const allQuarters = [...new Set([...expectedQuarters, ...recordQuarters])].sort();
+  const totalQuarters = allQuarters.length || 1;
 
-  let lpUpdate: CellStatus = '-';
-  if (latest.hasLpUpdate) lpUpdate = "Recv'd";
+  // For each deliverable, find which quarters have it
+  const portfolioHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasStandardizedPortfolio).map(r => r.quarter));
+  const lpHas = new Set(allRecords.filter(r => r.hasLpUpdate).map(r => r.quarter));
+  const finHas = new Set(allRecords.filter(r => r.hasFinancials).map(r => r.quarter));
 
-  let financials: CellStatus = '-';
-  if (latest.hasFinancials) financials = "Recv'd";
+  // Missing = all expected quarters minus the ones that have it
+  const portfolioMissing = allQuarters.filter(q => !portfolioHas.has(q));
+  const lpMissing = allQuarters.filter(q => !lpHas.has(q));
+  const finMissing = allQuarters.filter(q => !finHas.has(q));
 
   return {
     vehicleId,
-    portfolio,
-    lpUpdate,
-    financials,
-    nav: '-',
-    cashFlows: '-',
-    rounds: '-',
+    portfolio: { missing: portfolioMissing.length, total: totalQuarters, missingQuarters: portfolioMissing },
+    lpLetter: { missing: lpMissing.length, total: totalQuarters, missingQuarters: lpMissing },
+    financials: { missing: finMissing.length, total: totalQuarters, missingQuarters: finMissing },
   };
 }
 
@@ -151,7 +180,7 @@ function deriveDeliverables(rec: MonitoringRecord): DeliverableRow[] {
     portfolioStatus = portfolioDaysLeft !== null && portfolioDaysLeft < 0 ? 'LATE' : 'Expected';
   }
 
-  // LP Update
+  // LP Letter
   let lpStatus: CellStatus = '-';
   let lpReceived = '-';
   if (rec.hasLpUpdate) {
@@ -177,7 +206,7 @@ function deriveDeliverables(rec: MonitoringRecord): DeliverableRow[] {
       days: portfolioStatus === 'Done' || portfolioStatus === "Recv'd" ? null : portfolioDaysLeft,
     },
     {
-      deliverable: 'LP Update',
+      deliverable: 'LP Letter',
       expected: dateMemo,
       received: lpReceived,
       status: lpStatus,
@@ -214,14 +243,14 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
       }
     }
 
-    // LP Update: missing if no linked records
+    // LP Letter: missing if no linked records
     if (!rec.hasLpUpdate) {
       const due = portfolioDueDate(rec.quarter); // same timeline for now
       if (due) {
         const days = daysLeft(due);
         missing.push({
           dueDate: formatDate(due),
-          deliverable: 'LP Update',
+          deliverable: 'LP Letter',
           daysLeft: days,
           isOverdue: days < 0,
         });
@@ -248,25 +277,12 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
   return missing;
 }
 
-function getStatusForColumn(row: VehicleCycleRow, col: typeof CYCLE_COLUMNS[number]): CellStatus {
+function getFractionForColumn(row: VehicleCycleRow, col: typeof CYCLE_COLUMNS[number]): CellFraction {
   switch (col) {
     case 'Portfolio': return row.portfolio;
-    case 'LP Update': return row.lpUpdate;
+    case 'LP Letter': return row.lpLetter;
     case 'Financials': return row.financials;
-    case 'NAV': return row.nav;
-    case 'Cash Flows': return row.cashFlows;
-    case 'Rounds': return row.rounds;
   }
-}
-
-function countDone(row: VehicleCycleRow): number {
-  const statuses = [row.portfolio, row.lpUpdate, row.financials, row.nav, row.cashFlows, row.rounds];
-  return statuses.filter(s => s === 'Done' || s === "Recv'd").length;
-}
-
-function countApplicable(row: VehicleCycleRow): number {
-  const statuses = [row.portfolio, row.lpUpdate, row.financials, row.nav, row.cashFlows, row.rounds];
-  return statuses.filter(s => s !== 'N/A' && s !== '-').length;
 }
 
 // ============================================================================
@@ -276,7 +292,7 @@ function countApplicable(row: VehicleCycleRow): number {
 function deliverableIcon(name: string) {
   switch (name) {
     case 'Portfolio / SOI': return <FileText className="h-4 w-4" />;
-    case 'LP Update': return <BarChart3 className="h-4 w-4" />;
+    case 'LP Letter': return <BarChart3 className="h-4 w-4" />;
     case 'Financials': return <DollarSign className="h-4 w-4" />;
     default: return <FileText className="h-4 w-4" />;
   }
@@ -648,39 +664,63 @@ function computeOverdueAlerts(records: MonitoringRecord[], dismissed: Set<string
   now.setHours(0, 0, 0, 0);
   const items: AlertItem[] = [];
 
-  const latestByVehicle = new Map<string, MonitoringRecord>();
+  // Last 3 completed quarters based on today's date
+  const expectedQuarters = getLastNQuarters(3);
+
+  // Get all unique vehicle IDs and their TBV
+  const vehicleTbv = new Map<string, string>();
   for (const r of records) {
-    if (!r.vehicleId) continue;
-    const existing = latestByVehicle.get(r.vehicleId);
-    if (!existing || r.dateMemo > existing.dateMemo) {
-      latestByVehicle.set(r.vehicleId, r);
+    if (r.vehicleId && r.tbvFunds[0] && !vehicleTbv.has(r.vehicleId)) {
+      vehicleTbv.set(r.vehicleId, r.tbvFunds[0]);
     }
   }
 
-  for (const [, rec] of latestByVehicle) {
-    const due = portfolioDueDate(rec.quarter);
-    if (!due) continue;
-    const days = daysLeft(due);
-    if (days >= 0) continue;
-    const daysOver = Math.abs(days);
-    const tbv = rec.tbvFunds[0] || '';
+  // Group records by vehicle+quarter, pick latest dateMemo per combo
+  const byVehicleQuarter = new Map<string, MonitoringRecord>();
+  for (const r of records) {
+    if (!r.vehicleId || !r.quarter) continue;
+    const key = `${r.vehicleId}|${r.quarter}`;
+    const existing = byVehicleQuarter.get(key);
+    if (!existing || r.dateMemo > existing.dateMemo) {
+      byVehicleQuarter.set(key, r);
+    }
+  }
 
-    if (!rec.hasAnyPortfolio && !rec.hasStandardizedPortfolio) {
-      const key = `${rec.vehicleId}|${rec.quarter}|Portfolio`;
-      if (!dismissed.has(key)) {
-        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+  // For each vehicle × expected quarter, check for missing deliverables
+  for (const vehicleId of vehicleTbv.keys()) {
+    const tbv = vehicleTbv.get(vehicleId) || '';
+
+    for (const quarter of expectedQuarters) {
+      const due = portfolioDueDate(quarter);
+      if (!due) continue;
+      const days = daysLeft(due);
+      if (days >= 0) continue; // not overdue yet
+      const daysOver = Math.abs(days);
+
+      const rec = byVehicleQuarter.get(`${vehicleId}|${quarter}`);
+
+      // If no record exists at all for this quarter, all 3 are missing
+      const hasPortfolio = rec ? (rec.hasAnyPortfolio || rec.hasStandardizedPortfolio) : false;
+      const hasLp = rec ? rec.hasLpUpdate : false;
+      const hasFin = rec ? rec.hasFinancials : false;
+
+      if (!hasPortfolio) {
+        const key = `${vehicleId}|${quarter}|Portfolio`;
+        if (!dismissed.has(key)) {
+          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
+        }
       }
-    }
-    if (!rec.hasLpUpdate) {
-      const key = `${rec.vehicleId}|${rec.quarter}|LP Update`;
-      if (!dismissed.has(key)) {
-        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'LP Update', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      if (!hasLp) {
+        const key = `${vehicleId}|${quarter}|LP Letter`;
+        if (!dismissed.has(key)) {
+          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'LP Letter', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
+        }
       }
-    }
-    if (!rec.hasFinancials) {
-      const key = `${rec.vehicleId}|${rec.quarter}|Financials`;
-      if (!dismissed.has(key)) {
-        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Financials', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      if (!hasFin) {
+        const key = `${vehicleId}|${quarter}|Financials`;
+        if (!dismissed.has(key)) {
+          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Financials', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
+        }
       }
     }
   }
@@ -719,12 +759,17 @@ function alertTypeBadge(type: AlertItem['type']): string {
 }
 
 type AlertFilter = 'all' | 'overdue' | 'received' | 'standardized';
+type DeliverableFilter = 'all' | 'Portfolio' | 'LP Letter' | 'Financials';
+type QuarterFilter = 'all' | string;
 
 function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[]; onVehicleClick: (id: string) => void }) {
   const queryClient = useQueryClient();
-  const [filter, setFilter] = useState<AlertFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<AlertFilter>('all');
+  const [deliverableFilter, setDeliverableFilter] = useState<DeliverableFilter>('all');
+  const [quarterFilter, setQuarterFilter] = useState<QuarterFilter>('all');
   const [isExpanded, setIsExpanded] = useState(true);
   const [dismissing, setDismissing] = useState<string | null>(null);
+  const [expandedTbvs, setExpandedTbvs] = useState<Set<string>>(new Set());
 
   const { data: recentChanges = [] } = useQuery({
     queryKey: ['recentChanges'],
@@ -745,8 +790,19 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
   const overdueAlerts = useMemo(() => computeOverdueAlerts(records, dismissedSet), [records, dismissedSet]);
   const changeAlerts = useMemo(() => recentChangesToAlerts(recentChanges), [recentChanges]);
 
+  // Enrich changeAlerts with TBV from records
+  const enrichedChangeAlerts = useMemo(() => {
+    const tbvLookup = new Map<string, string>();
+    for (const r of records) {
+      if (r.vehicleId && r.tbvFunds[0] && !tbvLookup.has(r.vehicleId)) {
+        tbvLookup.set(r.vehicleId, r.tbvFunds[0]);
+      }
+    }
+    return changeAlerts.map(a => ({ ...a, tbv: tbvLookup.get(a.vehicleId) || 'Unknown' }));
+  }, [changeAlerts, records]);
+
   const allAlerts = useMemo(() => {
-    const combined: AlertItem[] = [...overdueAlerts, ...changeAlerts];
+    const combined: AlertItem[] = [...overdueAlerts, ...enrichedChangeAlerts];
     combined.sort((a, b) => {
       const typeOrder = { overdue: 0, received: 1, standardized: 2 };
       if (typeOrder[a.type] !== typeOrder[b.type]) return typeOrder[a.type] - typeOrder[b.type];
@@ -754,13 +810,48 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
       return a.vehicleId.localeCompare(b.vehicleId);
     });
     return combined;
-  }, [overdueAlerts, changeAlerts]);
+  }, [overdueAlerts, enrichedChangeAlerts]);
 
   const overdueCount = overdueAlerts.length;
-  const receivedCount = changeAlerts.filter(a => a.type === 'received').length;
-  const standardizedCount = changeAlerts.filter(a => a.type === 'standardized').length;
+  const receivedCount = enrichedChangeAlerts.filter(a => a.type === 'received').length;
+  const standardizedCount = enrichedChangeAlerts.filter(a => a.type === 'standardized').length;
 
-  const filtered = filter === 'all' ? allAlerts : allAlerts.filter(a => a.type === filter);
+  // Available quarters from alerts
+  const availableQuarters = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of allAlerts) if (a.quarter) set.add(a.quarter);
+    return [...set].sort();
+  }, [allAlerts]);
+
+  // Apply all filters
+  const filtered = useMemo(() => {
+    return allAlerts.filter(a => {
+      if (typeFilter !== 'all' && a.type !== typeFilter) return false;
+      if (deliverableFilter !== 'all' && a.deliverable !== deliverableFilter) return false;
+      if (quarterFilter !== 'all' && a.quarter !== quarterFilter) return false;
+      return true;
+    });
+  }, [allAlerts, typeFilter, deliverableFilter, quarterFilter]);
+
+  // Group filtered alerts by TBV
+  const groupedByTbv = useMemo(() => {
+    const map = new Map<string, AlertItem[]>();
+    for (const a of filtered) {
+      const tbv = a.tbv || 'Unknown';
+      const list = map.get(tbv) || [];
+      list.push(a);
+      map.set(tbv, list);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [filtered]);
+
+  const toggleTbv = useCallback((tbv: string) => {
+    setExpandedTbvs(prev => {
+      const next = new Set(prev);
+      if (next.has(tbv)) next.delete(tbv); else next.add(tbv);
+      return next;
+    });
+  }, []);
 
   const handleDismiss = useCallback(async (alert: AlertItem) => {
     const key = `${alert.vehicleId}|${alert.quarter}|${alert.deliverable}`;
@@ -817,69 +908,121 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
 
       {isExpanded && (
         <>
-          {/* Filter tabs */}
-          <div className="px-5 py-2 border-t border-[#F3F4F6] flex items-center gap-1.5">
-            {([
-              { id: 'all' as const, label: 'All', count: allAlerts.length },
-              { id: 'overdue' as const, label: 'Overdue', count: overdueCount },
-              { id: 'received' as const, label: 'Received (7d)', count: receivedCount },
-              { id: 'standardized' as const, label: 'Standardized (7d)', count: standardizedCount },
-            ]).map(t => (
-              <button
-                key={t.id}
-                onClick={(e) => { e.stopPropagation(); setFilter(t.id); }}
-                className={cn(
-                  'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
-                  filter === t.id
-                    ? 'bg-[#1E4B7A] text-white'
-                    : 'text-[#6B7280] hover:bg-[#F3F4F6]'
-                )}
-              >
-                {t.label} ({t.count})
-              </button>
-            ))}
+          {/* Filters row */}
+          <div className="px-5 py-2 border-t border-[#F3F4F6] flex items-center gap-3 flex-wrap">
+            {/* Status type tabs */}
+            <div className="flex items-center gap-1">
+              {([
+                { id: 'all' as const, label: 'All', count: allAlerts.length },
+                { id: 'overdue' as const, label: 'Overdue', count: overdueCount },
+                { id: 'received' as const, label: 'Received', count: receivedCount },
+                { id: 'standardized' as const, label: 'Standardized', count: standardizedCount },
+              ]).map(t => (
+                <button
+                  key={t.id}
+                  onClick={(e) => { e.stopPropagation(); setTypeFilter(t.id); }}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    typeFilter === t.id
+                      ? 'bg-[#1E4B7A] text-white'
+                      : 'text-[#6B7280] hover:bg-[#F3F4F6]'
+                  )}
+                >
+                  {t.label} ({t.count})
+                </button>
+              ))}
+            </div>
+
+            <div className="h-4 w-px bg-[#E5E7EB]" />
+
+            {/* Deliverable type dropdown */}
+            <select
+              value={deliverableFilter}
+              onChange={e => setDeliverableFilter(e.target.value as DeliverableFilter)}
+              className="text-xs border border-[#E5E7EB] rounded-md px-2 py-1 text-[#374151] bg-white focus:outline-none focus:ring-1 focus:ring-[#1E4B7A]"
+            >
+              <option value="all">All types</option>
+              <option value="Portfolio">Portfolio</option>
+              <option value="LP Letter">LP Letter</option>
+              <option value="Financials">Financials</option>
+            </select>
+
+            {/* Quarter dropdown */}
+            <select
+              value={quarterFilter}
+              onChange={e => setQuarterFilter(e.target.value)}
+              className="text-xs border border-[#E5E7EB] rounded-md px-2 py-1 text-[#374151] bg-white focus:outline-none focus:ring-1 focus:ring-[#1E4B7A]"
+            >
+              <option value="all">All quarters</option>
+              {availableQuarters.map(q => (
+                <option key={q} value={q}>{q}</option>
+              ))}
+            </select>
+
+            <span className="text-[10px] text-[#9CA3AF] ml-auto">{filtered.length} alerts</span>
           </div>
 
-          {/* Alert list */}
-          <div className="max-h-[320px] overflow-y-auto divide-y divide-[#F3F4F6] border-t border-[#F3F4F6]">
+          {/* Alert list grouped by TBV */}
+          <div className="max-h-[400px] overflow-y-auto border-t border-[#F3F4F6]">
             {filtered.length === 0 ? (
-              <div className="px-5 py-6 text-center text-sm text-[#9CA3AF]">
-                {filter === 'received' || filter === 'standardized'
-                  ? `No ${filter} deliverables in the last 7 days`
-                  : filter === 'overdue'
-                    ? 'No overdue deliverables'
-                    : 'No alerts'
-                }
-              </div>
+              <div className="px-5 py-6 text-center text-sm text-[#9CA3AF]">No alerts match the selected filters</div>
             ) : (
-              filtered.map((alert, idx) => {
-                const dismissKey = `${alert.vehicleId}|${alert.quarter}|${alert.deliverable}`;
+              groupedByTbv.map(([tbv, items]) => {
+                const isOpen = expandedTbvs.has(tbv);
+                const overdueInGroup = items.filter(a => a.type === 'overdue').length;
                 return (
-                  <div
-                    key={`${alert.vehicleId}-${alert.quarter}-${alert.deliverable}-${alert.type}-${idx}`}
-                    className="px-5 py-2.5 flex items-center gap-3 hover:bg-[#F9FAFB] transition-colors"
-                  >
-                    {alertTypeIcon(alert.type)}
+                  <div key={tbv}>
                     <button
-                      onClick={() => onVehicleClick(alert.vehicleId)}
-                      className="text-sm font-medium text-[#1E4B7A] hover:underline shrink-0 min-w-[140px] text-left"
+                      onClick={() => toggleTbv(tbv)}
+                      className="w-full px-5 py-2 flex items-center gap-2 bg-[#F9FAFB] hover:bg-[#F3F4F6] border-b border-[#E5E7EB] transition-colors"
                     >
-                      {alert.vehicleId}
+                      {isOpen
+                        ? <ChevronDown className="h-3.5 w-3.5 text-[#6B7280]" />
+                        : <ChevronRight className="h-3.5 w-3.5 text-[#6B7280]" />
+                      }
+                      <span className="text-xs font-semibold text-[#374151]">{tbv}</span>
+                      <span className="text-[10px] text-[#9CA3AF]">{items.length} alerts</span>
+                      {overdueInGroup > 0 && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-100">
+                          <AlertTriangle className="h-2.5 w-2.5" /> {overdueInGroup}
+                        </span>
+                      )}
                     </button>
-                    <span className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0', alertTypeBadge(alert.type))}>
-                      {alert.deliverable}
-                    </span>
-                    <span className="text-xs text-[#6B7280] truncate flex-1">{alert.detail}</span>
-                    <span className="text-[10px] text-[#9CA3AF] shrink-0">{alert.quarter}</span>
-                    {alert.type === 'overdue' && (
-                      <button
-                        onClick={() => handleDismiss(alert)}
-                        disabled={dismissing === dismissKey}
-                        title="Mark as irrelevant — stops notifications for this item"
-                        className="p-1 rounded hover:bg-red-50 text-[#9CA3AF] hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                      </button>
+                    {isOpen && (
+                      <div className="divide-y divide-[#F3F4F6]">
+                        {items.map((alert, idx) => {
+                          const dismissKey = `${alert.vehicleId}|${alert.quarter}|${alert.deliverable}`;
+                          return (
+                            <div
+                              key={`${alert.vehicleId}-${alert.quarter}-${alert.deliverable}-${alert.type}-${idx}`}
+                              className="px-5 pl-10 py-2.5 flex items-center gap-3 hover:bg-[#F9FAFB] transition-colors"
+                            >
+                              {alertTypeIcon(alert.type)}
+                              <button
+                                onClick={() => onVehicleClick(alert.vehicleId)}
+                                className="text-sm font-medium text-[#1E4B7A] hover:underline shrink-0 min-w-[140px] text-left"
+                              >
+                                {alert.vehicleId}
+                              </button>
+                              <span className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0', alertTypeBadge(alert.type))}>
+                                {alert.deliverable}
+                              </span>
+                              <span className="text-xs text-[#6B7280] truncate flex-1">{alert.detail}</span>
+                              <span className="text-[10px] text-[#9CA3AF] shrink-0">{alert.quarter}</span>
+                              {alert.type === 'overdue' && (
+                                <button
+                                  onClick={() => handleDismiss(alert)}
+                                  disabled={dismissing === dismissKey}
+                                  title="Mark as irrelevant — stops notifications for this item"
+                                  className="p-1 rounded hover:bg-red-50 text-[#9CA3AF] hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 );
@@ -906,19 +1049,20 @@ export function OverallQualityPage() {
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
 
   const tbvCycleGroups = useMemo(() => {
-    const latestByVehicle = new Map<string, MonitoringRecord>();
+    // Group all records by vehicle
+    const recordsByVehicle = new Map<string, MonitoringRecord[]>();
     for (const r of records) {
       if (!r.vehicleId) continue;
-      const existing = latestByVehicle.get(r.vehicleId);
-      if (!existing || r.dateMemo > existing.dateMemo) {
-        latestByVehicle.set(r.vehicleId, r);
-      }
+      const list = recordsByVehicle.get(r.vehicleId) || [];
+      list.push(r);
+      recordsByVehicle.set(r.vehicleId, list);
     }
 
     const tbvMap = new Map<string, VehicleCycleRow[]>();
-    for (const [vehicleId, rec] of latestByVehicle) {
-      const tbvs = rec.tbvFunds;
-      const row = deriveRow(vehicleId, rec);
+    for (const [vehicleId, vehicleRecords] of recordsByVehicle) {
+      // Use TBV from any record (they should all be the same for a vehicle)
+      const tbvs = vehicleRecords[0].tbvFunds;
+      const row = deriveRow(vehicleId, vehicleRecords);
       for (const tbv of tbvs) {
         const list = tbvMap.get(tbv) || [];
         list.push(row);
@@ -930,7 +1074,7 @@ export function OverallQualityPage() {
       .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
       .map(([tbv, vehicles]) => {
         vehicles.sort((a, b) => a.vehicleId.localeCompare(b.vehicleId));
-        const portfolioCount = vehicles.filter(v => v.portfolio === 'Done' || v.portfolio === "Recv'd").length;
+        const portfolioCount = vehicles.filter(v => v.portfolio.missing > 0).length;
         const totalVehicles = vehicles.length;
         return {
           tbv,
@@ -977,6 +1121,51 @@ export function OverallQualityPage() {
   );
 }
 
+function FractionCell({ frac }: { frac: CellFraction }) {
+  const [open, setOpen] = useState(false);
+  const received = frac.total - frac.missing;
+  const bgClass = frac.missing === 0
+    ? 'bg-emerald-100 text-emerald-800'
+    : received === 0
+      ? 'bg-red-50 text-red-700'
+      : 'bg-amber-100 text-amber-800';
+
+  return (
+    <td className="px-3 py-2.5 text-center relative">
+      <button
+        onClick={() => setOpen(prev => !prev)}
+        className={cn('inline-flex px-2 py-0.5 rounded-full text-xs font-medium hover:ring-2 hover:ring-offset-1 hover:ring-[#1E4B7A]/30 transition-all', bgClass)}
+      >
+        {received}/{frac.total}
+      </button>
+      {open && (
+        <div className="absolute z-20 top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-[#E5E7EB] rounded-lg shadow-lg p-3 min-w-[160px] text-left">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-[#111827]">
+              {frac.missing === 0 ? 'All received' : 'Missing for:'}
+            </span>
+            <button onClick={() => setOpen(false)} className="text-[#6B7280] hover:text-[#111827]">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+          {frac.missingQuarters.length > 0 ? (
+            <ul className="space-y-1">
+              {frac.missingQuarters.map(q => (
+                <li key={q} className="text-xs text-[#374151] flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
+                  {q}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-emerald-600">All quarters have this deliverable.</p>
+          )}
+        </div>
+      )}
+    </td>
+  );
+}
+
 function TbvCycleSection({
   group,
   onVehicleClick,
@@ -999,8 +1188,8 @@ function TbvCycleSection({
             : <ChevronRight className="h-4 w-4 opacity-70" />
           }
           <h2 className="text-sm font-semibold">{group.tbv}</h2>
-          <span className={cn('text-sm font-mono', group.pct >= 80 ? 'text-emerald-300' : group.pct >= 50 ? 'text-amber-300' : 'text-red-300')}>
-            ({group.portfolioCount}/{group.totalVehicles} portfolios, {group.pct.toFixed(0)}%)
+          <span className={cn('text-sm font-mono', group.pct === 0 ? 'text-emerald-300' : group.pct <= 20 ? 'text-amber-300' : 'text-red-300')}>
+            ({group.portfolioCount}/{group.totalVehicles} missing portfolios)
           </span>
         </div>
         <span className="text-xs opacity-70">{group.vehicles.length} vehicles</span>
@@ -1030,16 +1219,9 @@ function TbvCycleSection({
                       {row.vehicleId}
                     </button>
                   </td>
-                  {CYCLE_COLUMNS.map(col => {
-                    const status = getStatusForColumn(row, col);
-                    return (
-                      <td key={col} className="px-3 py-2.5 text-center">
-                        <span className={cn('inline-flex px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(status))}>
-                          {status}
-                        </span>
-                      </td>
-                    );
-                  })}
+                  {CYCLE_COLUMNS.map(col => (
+                    <FractionCell key={col} frac={getFractionForColumn(row, col)} />
+                  ))}
                   <td className="px-3 py-2.5 text-center">
                     <div className="flex items-center justify-center gap-1">
                       <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
