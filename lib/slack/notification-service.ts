@@ -1,11 +1,13 @@
 import sql from '@/lib/db';
 import { getMonitoringRecords, type MonitoringRecord } from '@/actions/overall-quality';
-import { postToSlack } from './client';
+import { postToSlack, postBotMessage } from './client';
 import {
   buildOverdueAlert,
+  buildInteractiveOverdueAlert,
   buildReceivedConfirmation,
   buildStandardizedUpdate,
   buildWeeklyDigest,
+  type OverdueItem,
 } from './message-builder';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -41,6 +43,23 @@ function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Get the last N completed quarters from today */
+function getLastNQuarters(n: number): string[] {
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const currentQ = Math.floor(currentMonth / 3) + 1;
+  const quarters: string[] = [];
+  let q = currentQ;
+  let y = currentYear;
+  for (let i = 0; i < n; i++) {
+    q--;
+    if (q === 0) { q = 4; y--; }
+    quarters.push(`Q${q} ${y}`);
+  }
+  return quarters.reverse();
+}
+
 /** Dedup key for overdue: same vehicle+quarter+deliverable within same week bucket */
 function weekBucket(daysOverdue: number): number {
   return Math.floor(daysOverdue / 7);
@@ -66,69 +85,57 @@ async function logNotification(
 
 // ─── Overdue item detection ──────────────────────────────────────────────────
 
-interface OverdueItem {
-  vehicleId: string;
-  quarter: string;
-  deliverable: string;
-  daysOverdue: number;
-  dueDate: string;
-  tbv: string;
-}
-
 function findOverdueItems(records: MonitoringRecord[]): OverdueItem[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const items: OverdueItem[] = [];
 
-  // Get latest record per vehicle
-  const latestByVehicle = new Map<string, MonitoringRecord>();
+  // Last 3 completed quarters based on today's date
+  const expectedQuarters = getLastNQuarters(3);
+
+  // Get all unique vehicle IDs and their TBV
+  const vehicleTbv = new Map<string, string>();
   for (const r of records) {
-    if (!r.vehicleId) continue;
-    const existing = latestByVehicle.get(r.vehicleId);
-    if (!existing || r.dateMemo > existing.dateMemo) {
-      latestByVehicle.set(r.vehicleId, r);
+    if (r.vehicleId && r.tbvFunds[0] && !vehicleTbv.has(r.vehicleId)) {
+      vehicleTbv.set(r.vehicleId, r.tbvFunds[0]);
     }
   }
 
-  for (const [, rec] of latestByVehicle) {
-    const due = dueDate(rec.quarter);
-    if (!due) continue;
-    const days = daysBetween(due, now);
-    if (days <= 0) continue; // not overdue yet
-
-    const tbv = rec.tbvFunds[0] || '';
-
-    if (!rec.hasAnyPortfolio && !rec.hasStandardizedPortfolio) {
-      items.push({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'Portfolio',
-        daysOverdue: days,
-        dueDate: formatDate(due),
-        tbv,
-      });
+  // Group by vehicle+quarter, pick latest dateMemo per combo
+  const byVehicleQuarter = new Map<string, MonitoringRecord>();
+  for (const r of records) {
+    if (!r.vehicleId || !r.quarter) continue;
+    const key = `${r.vehicleId}|${r.quarter}`;
+    const existing = byVehicleQuarter.get(key);
+    if (!existing || r.dateMemo > existing.dateMemo) {
+      byVehicleQuarter.set(key, r);
     }
+  }
 
-    if (!rec.hasLpUpdate) {
-      items.push({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'LP Update',
-        daysOverdue: days,
-        dueDate: formatDate(due),
-        tbv,
-      });
-    }
+  // For each vehicle × expected quarter, check for missing deliverables
+  for (const vehicleId of vehicleTbv.keys()) {
+    const tbv = vehicleTbv.get(vehicleId) || '';
 
-    if (!rec.hasFinancials) {
-      items.push({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'Financials',
-        daysOverdue: days,
-        dueDate: formatDate(due),
-        tbv,
-      });
+    for (const quarter of expectedQuarters) {
+      const due = dueDate(quarter);
+      if (!due) continue;
+      const days = daysBetween(due, now);
+      if (days <= 0) continue; // not overdue yet
+
+      const rec = byVehicleQuarter.get(`${vehicleId}|${quarter}`);
+      const hasPortfolio = rec ? (rec.hasAnyPortfolio || rec.hasStandardizedPortfolio) : false;
+      const hasLp = rec ? rec.hasLpUpdate : false;
+      const hasFin = rec ? rec.hasFinancials : false;
+
+      if (!hasPortfolio) {
+        items.push({ vehicleId, quarter, deliverable: 'Portfolio', daysOverdue: days, dueDate: formatDate(due), tbv });
+      }
+      if (!hasLp) {
+        items.push({ vehicleId, quarter, deliverable: 'LP Letter', daysOverdue: days, dueDate: formatDate(due), tbv });
+      }
+      if (!hasFin) {
+        items.push({ vehicleId, quarter, deliverable: 'Financials', daysOverdue: days, dueDate: formatDate(due), tbv });
+      }
     }
   }
 
@@ -169,12 +176,19 @@ async function getDismissedKeys(): Promise<Set<string>> {
   return new Set(rows.map(r => `${r.vehicle_id}|${r.quarter}|${r.deliverable}`));
 }
 
-export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: number; errors: string[] }> {
+/**
+ * Get overdue items (with dismissed items filtered out) for use by the interaction handler.
+ */
+export async function getOverdueItemsForSlack(): Promise<OverdueItem[]> {
   const records = await getMonitoringRecords();
   const dismissedKeys = await getDismissedKeys();
-  const allOverdue = findOverdueItems(records).filter(item =>
+  return findOverdueItems(records).filter(item =>
     !dismissedKeys.has(`${item.vehicleId}|${item.quarter}|${item.deliverable}`)
   );
+}
+
+export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: number; errors: string[] }> {
+  const allOverdue = await getOverdueItemsForSlack();
   const toSend = await filterAlreadySent(allOverdue);
   const errors: string[] = [];
 
@@ -182,8 +196,21 @@ export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: numb
     return { sent: 0, skipped: allOverdue.length, errors: [] };
   }
 
-  const payload = buildOverdueAlert(toSend);
-  const result = await postToSlack(payload);
+  // Use bot API (interactive) if SLACK_BOT_TOKEN + SLACK_CHANNEL_ID are configured
+  const channelId = process.env.SLACK_CHANNEL_ID;
+  const hasBotToken = !!process.env.SLACK_BOT_TOKEN;
+
+  let result;
+  let payload;
+
+  if (hasBotToken && channelId) {
+    payload = buildInteractiveOverdueAlert(toSend, { tbv: 'all', type: 'all', page: 1 });
+    result = await postBotMessage(channelId, payload.blocks as Record<string, unknown>[], 'Daily Overdue Report');
+  } else {
+    // Fallback to webhook (non-interactive)
+    payload = buildOverdueAlert(toSend);
+    result = await postToSlack(payload);
+  }
 
   // Log each item individually for granular dedup
   for (const item of toSend) {
@@ -340,16 +367,16 @@ export async function detectAndNotifyChanges(): Promise<{ received: number; stan
       receivedCount++;
     }
 
-    // Detect LP Update received
+    // Detect LP Letter received
     if (rec.hasLpUpdate && !prevLpUpdate) {
       const payload = buildReceivedConfirmation({
         vehicleId: rec.vehicleId,
         quarter: rec.quarter,
-        deliverable: 'LP Update',
+        deliverable: 'LP Letter',
       });
       const result = await postToSlack(payload);
-      await logNotification('received', rec.vehicleId, rec.quarter, 'LP Update', null, payload, result.httpStatus ?? null, result.error ?? null);
-      if (!result.ok) errors.push(`LP Update received for ${rec.vehicleId}: ${result.error}`);
+      await logNotification('received', rec.vehicleId, rec.quarter, 'LP Letter', null, payload, result.httpStatus ?? null, result.error ?? null);
+      if (!result.ok) errors.push(`LP Letter received for ${rec.vehicleId}: ${result.error}`);
       receivedCount++;
     }
 
