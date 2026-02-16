@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 type CellStatus = 'Done' | "Recv'd" | 'LATE' | 'Expected' | 'N/A' | '-';
 
-const CYCLE_COLUMNS = ['Portfolio', 'LP Letter', 'Financials'] as const;
+const CYCLE_COLUMNS = ['Standardized Portfolio', 'LP Letter', 'Portfolio/SOI'] as const;
 
 interface CellFraction {
   missing: number;
@@ -136,28 +136,56 @@ interface DueDeliverable {
 // ============================================================================
 
 function deriveRow(vehicleId: string, allRecords: MonitoringRecord[]): VehicleCycleRow {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
   // Expected quarters = last 3 completed quarters based on today
   const expectedQuarters = getLastNQuarters(3);
   // Also include any quarters from records that aren't in the expected set
   const recordQuarters = [...new Set(allRecords.map(r => r.quarter).filter(Boolean))];
-  const allQuarters = [...new Set([...expectedQuarters, ...recordQuarters])].sort();
+  // Only include quarters whose 60-day due date has already passed
+  const allQuarters = [...new Set([...expectedQuarters, ...recordQuarters])]
+    .filter(q => {
+      const due = portfolioDueDate(q);
+      return due && due.getTime() < now.getTime();
+    })
+    .sort();
   const totalQuarters = allQuarters.length || 1;
 
   // For each deliverable, find which quarters have it
-  const portfolioHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasStandardizedPortfolio).map(r => r.quarter));
+  const stdPortfolioHas = new Set(allRecords.filter(r => r.hasStandardizedPortfolio).map(r => r.quarter));
   const lpHas = new Set(allRecords.filter(r => r.hasLpUpdate).map(r => r.quarter));
-  const finHas = new Set(allRecords.filter(r => r.hasFinancials).map(r => r.quarter));
+  const portfolioSoiHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasFinancials).map(r => r.quarter));
 
   // Missing = all expected quarters minus the ones that have it
-  const portfolioMissing = allQuarters.filter(q => !portfolioHas.has(q));
+  const stdPortfolioMissing = allQuarters.filter(q => !stdPortfolioHas.has(q));
   const lpMissing = allQuarters.filter(q => !lpHas.has(q));
-  const finMissing = allQuarters.filter(q => !finHas.has(q));
+  const portfolioSoiMissing = allQuarters.filter(q => !portfolioSoiHas.has(q));
 
   return {
     vehicleId,
-    portfolio: { missing: portfolioMissing.length, total: totalQuarters, missingQuarters: portfolioMissing },
+    portfolio: { missing: stdPortfolioMissing.length, total: totalQuarters, missingQuarters: stdPortfolioMissing },
     lpLetter: { missing: lpMissing.length, total: totalQuarters, missingQuarters: lpMissing },
-    financials: { missing: finMissing.length, total: totalQuarters, missingQuarters: finMissing },
+    financials: { missing: portfolioSoiMissing.length, total: totalQuarters, missingQuarters: portfolioSoiMissing },
+  };
+}
+
+function deriveRowForQuarter(vehicleId: string, allRecords: MonitoringRecord[], quarter: string): VehicleCycleRow {
+  const allQuarters = [quarter];
+
+  const stdPortfolioHas = new Set(allRecords.filter(r => r.hasStandardizedPortfolio).map(r => r.quarter));
+  const lpHas = new Set(allRecords.filter(r => r.hasLpUpdate).map(r => r.quarter));
+  const portfolioSoiHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasFinancials).map(r => r.quarter));
+
+  const stdPortfolioMissing = allQuarters.filter(q => !stdPortfolioHas.has(q));
+  const lpMissing = allQuarters.filter(q => !lpHas.has(q));
+  const portfolioSoiMissing = allQuarters.filter(q => !portfolioSoiHas.has(q));
+
+  return {
+    vehicleId,
+    portfolio: { missing: stdPortfolioMissing.length, total: 1, missingQuarters: stdPortfolioMissing },
+    lpLetter: { missing: lpMissing.length, total: 1, missingQuarters: lpMissing },
+    financials: { missing: portfolioSoiMissing.length, total: 1, missingQuarters: portfolioSoiMissing },
   };
 }
 
@@ -279,9 +307,9 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
 
 function getFractionForColumn(row: VehicleCycleRow, col: typeof CYCLE_COLUMNS[number]): CellFraction {
   switch (col) {
-    case 'Portfolio': return row.portfolio;
+    case 'Standardized Portfolio': return row.portfolio;
     case 'LP Letter': return row.lpLetter;
-    case 'Financials': return row.financials;
+    case 'Portfolio/SOI': return row.financials;
   }
 }
 
@@ -1106,6 +1134,7 @@ export function OverallQualityPage() {
         <TbvCycleSection
           key={group.tbv}
           group={group}
+          records={records}
           onVehicleClick={setSelectedVehicle}
         />
       ))}
@@ -1168,12 +1197,54 @@ function FractionCell({ frac }: { frac: CellFraction }) {
 
 function TbvCycleSection({
   group,
+  records,
   onVehicleClick,
 }: {
   group: TbvCycleGroup;
+  records: MonitoringRecord[];
   onVehicleClick: (vehicleId: string) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedQuarter, setSelectedQuarter] = useState<string | null>(null);
+
+  const availableQuarters = useMemo(() => {
+    const vehicleIds = new Set(group.vehicles.map(v => v.vehicleId));
+    const qSet = new Set<string>();
+    for (const r of records) {
+      if (r.vehicleId && vehicleIds.has(r.vehicleId) && r.quarter) {
+        qSet.add(r.quarter);
+      }
+    }
+    return [...qSet].sort((a, b) => {
+      const [, qa, ya] = a.match(/Q(\d)\s*(\d{4})/) || [];
+      const [, qb, yb] = b.match(/Q(\d)\s*(\d{4})/) || [];
+      return (+yb || 0) - (+ya || 0) || (+qb || 0) - (+qa || 0);
+    });
+  }, [group.vehicles, records]);
+
+  // Re-derive vehicle rows when a specific quarter is selected
+  const displayVehicles = useMemo(() => {
+    if (!selectedQuarter) return group.vehicles;
+
+    // Group records by vehicle, only for vehicles in this TBV group
+    const vehicleIds = new Set(group.vehicles.map(v => v.vehicleId));
+    const recordsByVehicle = new Map<string, MonitoringRecord[]>();
+    for (const r of records) {
+      if (!r.vehicleId || !vehicleIds.has(r.vehicleId)) continue;
+      const list = recordsByVehicle.get(r.vehicleId) || [];
+      list.push(r);
+      recordsByVehicle.set(r.vehicleId, list);
+    }
+
+    return group.vehicles.map(v => {
+      const vehicleRecords = recordsByVehicle.get(v.vehicleId) || [];
+      return deriveRowForQuarter(v.vehicleId, vehicleRecords, selectedQuarter);
+    });
+  }, [selectedQuarter, group.vehicles, records]);
+
+  const missingCount = displayVehicles.filter(v => v.portfolio.missing > 0).length;
+  const totalCount = displayVehicles.length;
+  const missingPct = totalCount > 0 ? (missingCount / totalCount) * 100 : 0;
 
   return (
     <div className="bg-white rounded-lg border border-[#E5E7EB] overflow-hidden">
@@ -1188,55 +1259,71 @@ function TbvCycleSection({
             : <ChevronRight className="h-4 w-4 opacity-70" />
           }
           <h2 className="text-sm font-semibold">{group.tbv}</h2>
-          <span className={cn('text-sm font-mono', group.pct === 0 ? 'text-emerald-300' : group.pct <= 20 ? 'text-amber-300' : 'text-red-300')}>
-            ({group.portfolioCount}/{group.totalVehicles} missing portfolios)
+          <span className={cn('text-sm font-mono', missingPct === 0 ? 'text-emerald-300' : missingPct <= 20 ? 'text-amber-300' : 'text-red-300')}>
+            ({missingCount}/{totalCount} missing std. portfolios)
           </span>
         </div>
         <span className="text-xs opacity-70">{group.vehicles.length} vehicles</span>
       </button>
 
-      {/* Matrix Table */}
+      {/* Quarter Picker + Matrix Table */}
       {isExpanded && (
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[#F9FAFB] text-left text-xs text-[#6B7280] uppercase tracking-wide">
-                <th className="px-4 py-2.5 font-medium min-w-[180px]">Vehicle</th>
-                {CYCLE_COLUMNS.map(col => (
-                  <th key={col} className="px-3 py-2.5 font-medium text-center min-w-[100px]">{col}</th>
-                ))}
-                <th className="px-3 py-2.5 font-medium text-center min-w-[120px]">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F3F4F6]">
-              {group.vehicles.map(row => (
-                <tr key={row.vehicleId} className="hover:bg-[#F9FAFB]">
-                  <td className="px-4 py-2.5">
-                    <button
-                      onClick={() => onVehicleClick(row.vehicleId)}
-                      className="text-sm font-medium text-[#1E4B7A] hover:underline text-left"
-                    >
-                      {row.vehicleId}
-                    </button>
-                  </td>
-                  {CYCLE_COLUMNS.map(col => (
-                    <FractionCell key={col} frac={getFractionForColumn(row, col)} />
-                  ))}
-                  <td className="px-3 py-2.5 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
-                        Push
-                      </button>
-                      <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
-                        Snooze
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+        <>
+          <div className="px-4 py-2.5 bg-[#F9FAFB] border-b border-[#E5E7EB] flex items-center gap-2">
+            <span className="text-xs font-medium text-[#6B7280]">Quarter:</span>
+            <select
+              value={selectedQuarter ?? ''}
+              onChange={e => setSelectedQuarter(e.target.value || null)}
+              className="text-xs border border-[#E5E7EB] rounded-md px-2.5 py-1 text-[#374151] bg-white focus:outline-none focus:ring-1 focus:ring-[#1E4B7A]"
+            >
+              <option value="">All Quarters</option>
+              {availableQuarters.map(q => (
+                <option key={q} value={q}>{q}</option>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </select>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-[#F9FAFB] text-left text-xs text-[#6B7280] uppercase tracking-wide">
+                  <th className="px-4 py-2.5 font-medium min-w-[180px]">Vehicle</th>
+                  {CYCLE_COLUMNS.map(col => (
+                    <th key={col} className="px-3 py-2.5 font-medium text-center min-w-[100px]">{col}</th>
+                  ))}
+                  <th className="px-3 py-2.5 font-medium text-center min-w-[120px]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F3F4F6]">
+                {displayVehicles.map(row => (
+                  <tr key={row.vehicleId} className="hover:bg-[#F9FAFB]">
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={() => onVehicleClick(row.vehicleId)}
+                        className="text-sm font-medium text-[#1E4B7A] hover:underline text-left"
+                      >
+                        {row.vehicleId}
+                      </button>
+                    </td>
+                    {CYCLE_COLUMNS.map(col => (
+                      <FractionCell key={col} frac={getFractionForColumn(row, col)} />
+                    ))}
+                    <td className="px-3 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
+                          Push
+                        </button>
+                        <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
+                          Snooze
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
