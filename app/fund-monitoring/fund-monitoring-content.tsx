@@ -54,14 +54,14 @@ export function FundMonitoringContent() {
       <Header />
       <GlobalFilters onVehicleClick={handleVehicleClick} />
       <main className="max-w-[1600px] mx-auto px-6 py-6">
-        <div className={tab !== 'general' ? 'hidden' : ''}>
+        {tab === 'general' && (
           <GeneralPage
             fundManager={filters.fundManager}
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
           />
-        </div>
-        <div className={tab !== 'overview' ? 'hidden' : ''}>
+        )}
+        {tab === 'overview' && (
           <OverviewPage
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
@@ -69,16 +69,16 @@ export function FundMonitoringContent() {
             dateReportedEnd={filters.dateReportedEnd}
             onProjectClick={handleProjectClick}
           />
-        </div>
-        <div className={tab !== 'historical' ? 'hidden' : ''}>
+        )}
+        {tab === 'historical' && (
           <HistoricalPage
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
             dateReportedStart={filters.dateReportedStart}
             dateReportedEnd={filters.dateReportedEnd}
           />
-        </div>
-        <div className={tab !== 'portfolio' ? 'hidden' : ''}>
+        )}
+        {tab === 'portfolio' && (
           <PortfolioMonitoringPage
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
@@ -86,35 +86,35 @@ export function FundMonitoringContent() {
             dateReportedEnd={filters.dateReportedEnd}
             onProjectClick={handleProjectClick}
           />
-        </div>
-        <div className={tab !== 'soi' ? 'hidden' : ''}>
+        )}
+        {tab === 'soi' && (
           <SOIPage
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
           />
-        </div>
-        <div className={tab !== 'team' ? 'hidden' : ''}>
+        )}
+        {tab === 'team' && (
           <TeamPage
             fundManager={filters.fundManager}
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
             onPersonClick={handlePersonClick}
           />
-        </div>
-        <div className={tab !== 'fm-monitoring' ? 'hidden' : ''}>
+        )}
+        {tab === 'fm-monitoring' && (
           <FundManagerMonitoringPage />
-        </div>
-        <div className={tab !== 'data-quality' ? 'hidden' : ''}>
+        )}
+        {tab === 'data-quality' && (
           <DataQualityPage
             vehicleId={filters.vehicleId}
             portfolioDate={filters.portfolioDate}
           />
-        </div>
-        <div className={tab !== 'bas' ? 'hidden' : ''}>
+        )}
+        {tab === 'bas' && (
           <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center">
             <p className="text-[#6B7280] text-sm">Bas&apos;s personal workspace will appear here.</p>
           </div>
-        </div>
+        )}
       </main>
       <ProjectCard
         projectId={selectedProjectId || ''}

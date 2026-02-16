@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -166,6 +166,7 @@ function NewsCardSkeleton() {
 
 export function HomepageContent() {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const { data: homeData, isLoading: homeLoading } = useQuery({
     queryKey: ['homepageData'],
@@ -198,6 +199,7 @@ export function HomepageContent() {
 
   const handleLogout = async () => {
     await fetch('/api/auth', { method: 'DELETE' });
+    queryClient.clear();
     router.push('/login');
   };
 

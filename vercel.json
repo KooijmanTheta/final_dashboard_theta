@@ -2,5 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    { "path": "/api/cron/slack-daily", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/slack-weekly", "schedule": "0 8 * * 1" },
+    { "path": "/api/cron/slack-changes", "schedule": "0 */4 * * *" }
+  ]
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { LogOut } from 'lucide-react';
 import { ComingSoonCard } from '@/components/dashboard/coming-soon-card';
 
@@ -15,6 +16,7 @@ function capitalizeName(name: string): string {
 export default function ODDPage() {
   const [username, setUsername] = useState('');
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     fetch('/api/auth/check')
@@ -27,6 +29,7 @@ export default function ODDPage() {
 
   const handleLogout = async () => {
     await fetch('/api/auth', { method: 'DELETE' });
+    queryClient.clear();
     router.push('/login');
   };
 

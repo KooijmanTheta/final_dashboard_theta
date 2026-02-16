@@ -9,11 +9,15 @@ import {
   type DataQualityProject,
   type DataQualityProjectsResult,
 } from '@/actions/data-quality';
+import { OverallQualityPage } from '@/components/pages/overall-quality-page';
+import { cn } from '@/lib/utils';
 
 interface DataQualityPageProps {
   vehicleId: string;
   portfolioDate: string;
 }
+
+type DataQualitySubTab = 'overall-quality' | 'project-enrichment';
 
 const KEY_FIELDS = [
   { key: 'coingecko_id', label: 'CoinGecko ID' },
@@ -51,6 +55,42 @@ function CompleteDot({ pct }: { pct: number }) {
 }
 
 export function DataQualityPage({ vehicleId, portfolioDate }: DataQualityPageProps) {
+  const [subTab, setSubTab] = useState<DataQualitySubTab>('overall-quality');
+
+  return (
+    <div className="space-y-6">
+      {/* Sub-tab navigation */}
+      <div className="flex items-center gap-1 border-b border-[#E5E7EB]">
+        {([
+          { id: 'overall-quality' as const, label: 'Overall Quality' },
+          { id: 'project-enrichment' as const, label: 'Project Enrichment' },
+        ]).map(t => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            className={cn(
+              'px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+              subTab === t.id
+                ? 'border-[#1E4B7A] text-[#1E4B7A]'
+                : 'border-transparent text-[#6B7280] hover:text-[#374151] hover:border-[#D1D5DB]'
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'overall-quality' && (
+        <OverallQualityPage />
+      )}
+      {subTab === 'project-enrichment' && (
+        <ProjectEnrichmentContent vehicleId={vehicleId} portfolioDate={portfolioDate} />
+      )}
+    </div>
+  );
+}
+
+function ProjectEnrichmentContent({ vehicleId, portfolioDate }: DataQualityPageProps) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [missingField, setMissingField] = useState<string>('');

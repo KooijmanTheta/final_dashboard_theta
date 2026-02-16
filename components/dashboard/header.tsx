@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { useFilterState } from '@/hooks/use-url-state';
@@ -31,6 +32,7 @@ export function Header() {
   const [{ tab }, setFilters] = useFilterState();
   const [username, setUsername] = useState('');
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     fetch('/api/auth/check')
@@ -45,6 +47,7 @@ export function Header() {
 
   const handleLogout = async () => {
     await fetch('/api/auth', { method: 'DELETE' });
+    queryClient.clear();
     router.push('/login');
   };
 
