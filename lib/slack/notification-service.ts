@@ -176,15 +176,28 @@ async function getDismissedKeys(): Promise<Set<string>> {
   return new Set(rows.map(r => `${r.vehicle_id}|${r.quarter}|${r.deliverable}`));
 }
 
+// Simple in-memory cache for overdue items (avoids re-querying DB on every button click)
+let cachedOverdueItems: OverdueItem[] | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 /**
  * Get overdue items (with dismissed items filtered out) for use by the interaction handler.
+ * Results are cached for 10 minutes since this data only changes once a day.
  */
 export async function getOverdueItemsForSlack(): Promise<OverdueItem[]> {
+  const now = Date.now();
+  if (cachedOverdueItems && now - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedOverdueItems;
+  }
+
   const records = await getMonitoringRecords();
   const dismissedKeys = await getDismissedKeys();
-  return findOverdueItems(records).filter(item =>
+  cachedOverdueItems = findOverdueItems(records).filter(item =>
     !dismissedKeys.has(`${item.vehicleId}|${item.quarter}|${item.deliverable}`)
   );
+  cacheTimestamp = now;
+  return cachedOverdueItems;
 }
 
 export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: number; errors: string[] }> {

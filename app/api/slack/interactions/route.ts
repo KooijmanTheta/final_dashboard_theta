@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySlackSignature, updateBotMessage } from '@/lib/slack/client';
-import { parseActionId, buildInteractiveOverdueAlert, applyFilters } from '@/lib/slack/message-builder';
+import { verifySlackSignature } from '@/lib/slack/client';
+import { parseActionId, buildInteractiveOverdueAlert } from '@/lib/slack/message-builder';
 import { getOverdueItemsForSlack } from '@/lib/slack/notification-service';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 10;
 
 export async function POST(req: NextRequest) {
-  // Read raw body for signature verification
   const rawBody = await req.text();
   const timestamp = req.headers.get('x-slack-request-timestamp') || '';
   const signature = req.headers.get('x-slack-signature') || '';
@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  // Slack sends interactions as application/x-www-form-urlencoded with a `payload` field
   const params = new URLSearchParams(rawBody);
   const payloadStr = params.get('payload');
   if (!payloadStr) {
@@ -24,7 +23,6 @@ export async function POST(req: NextRequest) {
 
   const payload = JSON.parse(payloadStr);
 
-  // We only handle block_actions (button clicks)
   if (payload.type !== 'block_actions') {
     return new NextResponse('', { status: 200 });
   }
@@ -39,26 +37,49 @@ export async function POST(req: NextRequest) {
     return new NextResponse('', { status: 200 });
   }
 
-  const channel = payload.channel?.id;
-  const messageTs = payload.message?.ts;
+  const responseUrl: string | undefined = payload.response_url;
 
-  if (!channel || !messageTs) {
+  // Acknowledge immediately — Slack needs a response within 3s
+  // Then use response_url to update the message (no timeout pressure)
+  if (responseUrl) {
+    // Fire off the update without awaiting — return 200 right away
+    updateMessageViaResponseUrl(responseUrl, filters).catch(err =>
+      console.error('Slack interaction update error:', err)
+    );
     return new NextResponse('', { status: 200 });
   }
 
-  // Respond immediately to Slack (must reply within 3s)
-  // Then update the message asynchronously
-  // Since Vercel serverless functions can't run after response, we do it before responding
-  // but we keep it fast by reusing cached data pattern
-
-  try {
-    const overdueItems = await getOverdueItemsForSlack();
-    const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
-
-    await updateBotMessage(channel, messageTs, blocks, 'Overdue Report');
-  } catch (err) {
-    console.error('Slack interaction handler error:', err);
+  // Fallback: if no response_url, try direct update before responding
+  const channel = payload.channel?.id;
+  const messageTs = payload.message?.ts;
+  if (channel && messageTs) {
+    const { updateBotMessage } = await import('@/lib/slack/client');
+    try {
+      const overdueItems = await getOverdueItemsForSlack();
+      const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
+      await updateBotMessage(channel, messageTs, blocks, 'Overdue Report');
+    } catch (err) {
+      console.error('Slack interaction handler error:', err);
+    }
   }
 
   return new NextResponse('', { status: 200 });
+}
+
+async function updateMessageViaResponseUrl(
+  responseUrl: string,
+  filters: { tbv: string; type: string; page: number },
+) {
+  const overdueItems = await getOverdueItemsForSlack();
+  const { blocks } = buildInteractiveOverdueAlert(overdueItems, filters);
+
+  await fetch(responseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      replace_original: true,
+      blocks,
+      text: 'Overdue Report',
+    }),
+  });
 }
