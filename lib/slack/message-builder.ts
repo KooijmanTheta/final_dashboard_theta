@@ -142,9 +142,18 @@ export function applyFilters(items: OverdueItem[], filters: OverdueFilters) {
   return { filtered, pageItems, totalPages, page, totalFiltered: filtered.length };
 }
 
+export interface RecentlyReceivedItem {
+  vehicleId: string;
+  quarter: string;
+  deliverable: string;
+  receivedAt: string;
+  type: string;
+}
+
 export function buildInteractiveOverdueAlert(
   allItems: OverdueItem[],
   filters: OverdueFilters = { tbv: 'all', type: 'all', page: 1 },
+  recentlyReceived: RecentlyReceivedItem[] = [],
 ) {
   const { pageItems, totalPages, page, totalFiltered } = applyFilters(allItems, filters);
   const uniqueVehicles = new Set(allItems.map(i => i.vehicleId)).size;
@@ -235,6 +244,29 @@ export function buildInteractiveOverdueAlert(
     }
 
     blocks.push({ type: 'actions', elements: paginationElements });
+  }
+
+  // Recently received section (last 7 days)
+  if (recentlyReceived.length > 0) {
+    blocks.push({ type: 'divider' });
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*\u2705 Recently received (last 7 days):* ${recentlyReceived.length} deliverables` },
+    });
+    const recLines = recentlyReceived.slice(0, 10).map(item => {
+      const icon = item.type === 'standardized' ? '\ud83c\udfaf' : '\u2705';
+      return `${icon} *${item.vehicleId}* \u2014 ${item.deliverable} \u00b7 ${item.quarter} \u00b7 _${item.receivedAt}_`;
+    });
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: recLines.join('\n') },
+    });
+    if (recentlyReceived.length > 10) {
+      blocks.push({
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `_+ ${recentlyReceived.length - 10} more received \u2014 check the dashboard_` }],
+      });
+    }
   }
 
   // Footer

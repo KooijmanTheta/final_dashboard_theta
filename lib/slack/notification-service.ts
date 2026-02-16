@@ -217,7 +217,8 @@ export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: numb
 
   if (hasBotToken && channelId) {
     // Bot API: always send the full daily report (no dedup — it's a single daily summary)
-    payload = buildInteractiveOverdueAlert(allOverdue, { tbv: 'all', type: 'all', page: 1 });
+    const recentlyReceived = await getRecentlyReceived(7);
+    payload = buildInteractiveOverdueAlert(allOverdue, { tbv: 'all', type: 'all', page: 1 }, recentlyReceived);
     result = await postBotMessage(channelId, payload.blocks as Record<string, unknown>[], 'Daily Overdue Report');
   } else {
     // Webhook fallback: apply dedup to avoid spamming the same items
@@ -319,6 +320,8 @@ export async function detectAndNotifyChanges(): Promise<{ received: number; stan
   const errors: string[] = [];
   let receivedCount = 0;
   let standardizedCount = 0;
+  const channelId = process.env.SLACK_CHANNEL_ID;
+  const hasBotToken = !!process.env.SLACK_BOT_TOKEN;
 
   // Get latest record per vehicle
   const latestByVehicle = new Map<string, MonitoringRecord>();
@@ -345,56 +348,38 @@ export async function detectAndNotifyChanges(): Promise<{ received: number; stan
     const prevFinancials = prev?.has_financials ?? false;
     const prevLpUpdate = prev?.has_lp_update ?? false;
 
-    // Detect portfolio received
+    // Collect new deliverables to send as a single bot message
+    const newItems: { deliverable: string; type: 'received' | 'standardized' }[] = [];
+
     if (rec.hasAnyPortfolio && !prevPortfolio) {
-      const payload = buildReceivedConfirmation({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'Portfolio',
-      });
-      const result = await postToSlack(payload);
-      await logNotification('received', rec.vehicleId, rec.quarter, 'Portfolio', null, payload, result.httpStatus ?? null, result.error ?? null);
-      if (!result.ok) errors.push(`Portfolio received for ${rec.vehicleId}: ${result.error}`);
-      receivedCount++;
+      newItems.push({ deliverable: 'Portfolio', type: 'received' });
     }
-
-    // Detect standardized
     if (rec.hasStandardizedPortfolio && !prevStandardized) {
-      const payload = buildStandardizedUpdate({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'Portfolio',
-      });
-      const result = await postToSlack(payload);
-      await logNotification('standardized', rec.vehicleId, rec.quarter, 'Portfolio', null, payload, result.httpStatus ?? null, result.error ?? null);
-      if (!result.ok) errors.push(`Standardized for ${rec.vehicleId}: ${result.error}`);
-      standardizedCount++;
+      newItems.push({ deliverable: 'Portfolio', type: 'standardized' });
     }
-
-    // Detect financials received
     if (rec.hasFinancials && !prevFinancials) {
-      const payload = buildReceivedConfirmation({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'Financials',
-      });
-      const result = await postToSlack(payload);
-      await logNotification('received', rec.vehicleId, rec.quarter, 'Financials', null, payload, result.httpStatus ?? null, result.error ?? null);
-      if (!result.ok) errors.push(`Financials received for ${rec.vehicleId}: ${result.error}`);
-      receivedCount++;
+      newItems.push({ deliverable: 'Financials', type: 'received' });
+    }
+    if (rec.hasLpUpdate && !prevLpUpdate) {
+      newItems.push({ deliverable: 'LP Letter', type: 'received' });
     }
 
-    // Detect LP Letter received
-    if (rec.hasLpUpdate && !prevLpUpdate) {
-      const payload = buildReceivedConfirmation({
-        vehicleId: rec.vehicleId,
-        quarter: rec.quarter,
-        deliverable: 'LP Letter',
-      });
-      const result = await postToSlack(payload);
-      await logNotification('received', rec.vehicleId, rec.quarter, 'LP Letter', null, payload, result.httpStatus ?? null, result.error ?? null);
-      if (!result.ok) errors.push(`LP Letter received for ${rec.vehicleId}: ${result.error}`);
-      receivedCount++;
+    for (const item of newItems) {
+      const payload = item.type === 'standardized'
+        ? buildStandardizedUpdate({ vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: item.deliverable })
+        : buildReceivedConfirmation({ vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: item.deliverable });
+
+      let result;
+      if (channelId && hasBotToken) {
+        result = await postBotMessage(channelId, payload.blocks as Record<string, unknown>[], `${item.deliverable} ${item.type}`);
+      } else {
+        result = await postToSlack(payload);
+      }
+
+      await logNotification(item.type, rec.vehicleId, rec.quarter, item.deliverable, null, payload, result.httpStatus ?? null, result.error ?? null);
+      if (!result.ok) errors.push(`${item.deliverable} ${item.type} for ${rec.vehicleId}: ${result.error}`);
+      if (item.type === 'received') receivedCount++;
+      else standardizedCount++;
     }
 
     // Upsert snapshot
@@ -412,6 +397,33 @@ export async function detectAndNotifyChanges(): Promise<{ received: number; stan
   }
 
   return { received: receivedCount, standardized: standardizedCount, errors };
+}
+
+// ─── Recently received (for daily report) ────────────────────────────────────
+
+export interface RecentlyReceivedItem {
+  vehicleId: string;
+  quarter: string;
+  deliverable: string;
+  receivedAt: string;
+  type: string; // 'received' | 'standardized'
+}
+
+export async function getRecentlyReceived(days = 7): Promise<RecentlyReceivedItem[]> {
+  const rows = await sql`
+    SELECT vehicle_id, quarter, deliverable, notification_type, sent_at
+    FROM tracking.slack_notifications
+    WHERE notification_type IN ('received', 'standardized')
+      AND sent_at > NOW() - ${days + ' days'}::INTERVAL
+    ORDER BY sent_at DESC
+  `;
+  return rows.map(r => ({
+    vehicleId: r.vehicle_id,
+    quarter: r.quarter,
+    deliverable: r.deliverable,
+    receivedAt: new Date(r.sent_at).toISOString().slice(0, 10),
+    type: r.notification_type,
+  }));
 }
 
 // ─── Seed snapshot baseline (no Slack messages) ─────────────────────────────
