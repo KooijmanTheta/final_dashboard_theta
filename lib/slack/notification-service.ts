@@ -189,11 +189,10 @@ export async function getOverdueItemsForSlack(): Promise<OverdueItem[]> {
 
 export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: number; errors: string[] }> {
   const allOverdue = await getOverdueItemsForSlack();
-  const toSend = await filterAlreadySent(allOverdue);
   const errors: string[] = [];
 
-  if (toSend.length === 0) {
-    return { sent: 0, skipped: allOverdue.length, errors: [] };
+  if (allOverdue.length === 0) {
+    return { sent: 0, skipped: 0, errors: [] };
   }
 
   // Use bot API (interactive) if SLACK_BOT_TOKEN + SLACK_CHANNEL_ID are configured
@@ -204,33 +203,38 @@ export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: numb
   let payload;
 
   if (hasBotToken && channelId) {
-    payload = buildInteractiveOverdueAlert(toSend, { tbv: 'all', type: 'all', page: 1 });
+    // Bot API: always send the full daily report (no dedup — it's a single daily summary)
+    payload = buildInteractiveOverdueAlert(allOverdue, { tbv: 'all', type: 'all', page: 1 });
     result = await postBotMessage(channelId, payload.blocks as Record<string, unknown>[], 'Daily Overdue Report');
   } else {
-    // Fallback to webhook (non-interactive)
+    // Webhook fallback: apply dedup to avoid spamming the same items
+    const toSend = await filterAlreadySent(allOverdue);
+    if (toSend.length === 0) {
+      return { sent: 0, skipped: allOverdue.length, errors: [] };
+    }
     payload = buildOverdueAlert(toSend);
     result = await postToSlack(payload);
-  }
 
-  // Log each item individually for granular dedup
-  for (const item of toSend) {
-    await logNotification(
-      'overdue',
-      item.vehicleId,
-      item.quarter,
-      item.deliverable,
-      item.daysOverdue,
-      payload,
-      result.httpStatus ?? null,
-      result.error ?? null,
-    );
+    // Log each item for granular dedup (only relevant for webhook path)
+    for (const item of toSend) {
+      await logNotification(
+        'overdue',
+        item.vehicleId,
+        item.quarter,
+        item.deliverable,
+        item.daysOverdue,
+        payload,
+        result.httpStatus ?? null,
+        result.error ?? null,
+      );
+    }
   }
 
   if (!result.ok) {
     errors.push(result.error || 'Unknown Slack error');
   }
 
-  return { sent: toSend.length, skipped: allOverdue.length - toSend.length, errors };
+  return { sent: allOverdue.length, skipped: 0, errors };
 }
 
 export async function sendWeeklyDigest(): Promise<{ sent: boolean; error?: string }> {
