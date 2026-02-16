@@ -96,7 +96,7 @@ function findOverdueItems(records: MonitoringRecord[]): OverdueItem[] {
     const days = daysBetween(due, now);
     if (days <= 0) continue; // not overdue yet
 
-    const tbv = rec.tbvFunds[0] || 'Unassigned';
+    const tbv = rec.tbvFunds[0] || '';
 
     if (!rec.hasAnyPortfolio && !rec.hasStandardizedPortfolio) {
       items.push({

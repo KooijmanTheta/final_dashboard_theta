@@ -659,7 +659,7 @@ function computeAlerts(records: MonitoringRecord[]): AlertItem[] {
 
   for (const [, rec] of latestByVehicle) {
     const due = portfolioDueDate(rec.quarter);
-    const tbv = rec.tbvFunds[0] || 'Unassigned';
+    const tbv = rec.tbvFunds[0] || '';
 
     // Received / standardized alerts
     if (rec.hasStandardizedPortfolio) {
@@ -855,7 +855,7 @@ export function OverallQualityPage() {
 
     const tbvMap = new Map<string, VehicleCycleRow[]>();
     for (const [vehicleId, rec] of latestByVehicle) {
-      const tbvs = rec.tbvFunds.length > 0 ? rec.tbvFunds : ['Unassigned'];
+      const tbvs = rec.tbvFunds;
       const row = deriveRow(vehicleId, rec);
       for (const tbv of tbvs) {
         const list = tbvMap.get(tbv) || [];

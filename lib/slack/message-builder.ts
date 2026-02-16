@@ -69,7 +69,7 @@ export function buildOverdueAlert(items: OverdueItem[]) {
 
   // Compact table-style list of top 10
   const lines = top10.map(item =>
-    `• *${item.vehicleId}* — ${item.deliverable} · ${item.daysOverdue}d overdue · ${item.quarter} · _${item.tbv}_`
+    `• *${item.vehicleId}* — ${item.deliverable} · ${item.daysOverdue}d overdue · ${item.quarter}${item.tbv ? ` · _${item.tbv}_` : ''}`
   );
   blocks.push({
     type: 'section',

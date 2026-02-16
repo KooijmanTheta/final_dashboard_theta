@@ -24,6 +24,8 @@ export interface MonitoringRecord {
  * - hasPortfolio: true when the `portfolio` attachment column has files
  * - hasStandardizedPortfolio: true when the `standardized_portfolio_v2` attachment column has files
  */
+const VALID_TBVS = new Set(['TBV1', 'TBV2', 'TBV3', 'TBV4', 'TBV5']);
+
 export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID || !AIRTABLE_TABLE_ID) {
     throw new Error('Airtable credentials not configured');
@@ -105,5 +107,6 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
     offset = data.offset;
   } while (offset);
 
-  return allRecords;
+  // Only include vehicles assigned to TBV1-TBV5
+  return allRecords.filter(r => r.tbvFunds.some(t => VALID_TBVS.has(t)));
 }
