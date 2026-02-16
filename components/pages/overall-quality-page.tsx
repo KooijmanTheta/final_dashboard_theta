@@ -28,8 +28,8 @@ interface VehicleCycleRow {
 interface TbvCycleGroup {
   tbv: string;
   vehicles: VehicleCycleRow[];
-  doneCount: number;
-  totalCells: number;
+  portfolioCount: number;
+  totalVehicles: number;
   pct: number;
 }
 
@@ -930,14 +930,14 @@ export function OverallQualityPage() {
       .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
       .map(([tbv, vehicles]) => {
         vehicles.sort((a, b) => a.vehicleId.localeCompare(b.vehicleId));
-        const doneCount = vehicles.reduce((sum, v) => sum + countDone(v), 0);
-        const totalCells = vehicles.reduce((sum, v) => sum + countApplicable(v), 0);
+        const portfolioCount = vehicles.filter(v => v.portfolio === 'Done' || v.portfolio === "Recv'd").length;
+        const totalVehicles = vehicles.length;
         return {
           tbv,
           vehicles,
-          doneCount,
-          totalCells,
-          pct: totalCells > 0 ? (doneCount / totalCells) * 100 : 0,
+          portfolioCount,
+          totalVehicles,
+          pct: totalVehicles > 0 ? (portfolioCount / totalVehicles) * 100 : 0,
         };
       });
 
@@ -1000,7 +1000,7 @@ function TbvCycleSection({
           }
           <h2 className="text-sm font-semibold">{group.tbv}</h2>
           <span className={cn('text-sm font-mono', group.pct >= 80 ? 'text-emerald-300' : group.pct >= 50 ? 'text-amber-300' : 'text-red-300')}>
-            ({group.doneCount}/{group.totalCells}, {group.pct.toFixed(0)}%)
+            ({group.portfolioCount}/{group.totalVehicles} portfolios, {group.pct.toFixed(0)}%)
           </span>
         </div>
         <span className="text-xs opacity-70">{group.vehicles.length} vehicles</span>
