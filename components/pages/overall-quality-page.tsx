@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, X, FileText, BarChart3, DollarSign, AlertTriangle, CheckCircle2, Clock, MessageSquare, Hash, Bell, BellOff } from 'lucide-react';
+import { useMemo, useState, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, ChevronRight, X, FileText, BarChart3, DollarSign, AlertTriangle, CheckCircle2, Clock, MessageSquare, Hash, Bell, BellOff, XCircle } from 'lucide-react';
 import { getMonitoringRecords, type MonitoringRecord } from '@/actions/overall-quality';
-import { getNotificationsForVehicle, type SlackNotificationRow } from '@/actions/slack-notifications';
+import { getNotificationsForVehicle, type SlackNotificationRow, getRecentChanges, type RecentChangeRow, getDismissedOverdue, type DismissedRow, dismissOverdueItem } from '@/actions/slack-notifications';
 import { cn } from '@/lib/utils';
 
 // ============================================================================
@@ -630,7 +630,7 @@ function CommunicationsLog({ vehicleId }: { vehicleId: string }) {
 }
 
 // ============================================================================
-// Alerts Panel — live overdue / received / standardized alerts
+// Alerts Panel — overdue from live data, received/standardized from last 7 days
 // ============================================================================
 
 interface AlertItem {
@@ -643,7 +643,7 @@ interface AlertItem {
   tbv: string;
 }
 
-function computeAlerts(records: MonitoringRecord[]): AlertItem[] {
+function computeOverdueAlerts(records: MonitoringRecord[], dismissed: Set<string>): AlertItem[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const items: AlertItem[] = [];
@@ -659,47 +659,47 @@ function computeAlerts(records: MonitoringRecord[]): AlertItem[] {
 
   for (const [, rec] of latestByVehicle) {
     const due = portfolioDueDate(rec.quarter);
-    const tbv = rec.tbvFunds[0] || '';
-
-    // Received / standardized alerts
-    if (rec.hasStandardizedPortfolio) {
-      items.push({ type: 'standardized', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Portfolio', detail: 'Standardized — ready for analysis', tbv });
-    } else if (rec.hasAnyPortfolio) {
-      items.push({ type: 'received', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Portfolio', detail: 'Raw portfolio received', tbv });
-    }
-    if (rec.hasFinancials) {
-      items.push({ type: 'received', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Financials', detail: 'Financials received', tbv });
-    }
-    if (rec.hasLpUpdate) {
-      items.push({ type: 'received', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'LP Update', detail: 'LP Update received', tbv });
-    }
-
-    // Overdue alerts
     if (!due) continue;
     const days = daysLeft(due);
     if (days >= 0) continue;
     const daysOver = Math.abs(days);
+    const tbv = rec.tbvFunds[0] || '';
 
     if (!rec.hasAnyPortfolio && !rec.hasStandardizedPortfolio) {
-      items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      const key = `${rec.vehicleId}|${rec.quarter}|Portfolio`;
+      if (!dismissed.has(key)) {
+        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      }
     }
     if (!rec.hasLpUpdate) {
-      items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'LP Update', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      const key = `${rec.vehicleId}|${rec.quarter}|LP Update`;
+      if (!dismissed.has(key)) {
+        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'LP Update', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      }
     }
     if (!rec.hasFinancials) {
-      items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Financials', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      const key = `${rec.vehicleId}|${rec.quarter}|Financials`;
+      if (!dismissed.has(key)) {
+        items.push({ type: 'overdue', vehicleId: rec.vehicleId, quarter: rec.quarter, deliverable: 'Financials', detail: `${daysOver}d overdue — due ${formatDate(due)}`, daysOverdue: daysOver, tbv });
+      }
     }
   }
 
-  // Sort: overdue first (most overdue at top), then received, then standardized
-  items.sort((a, b) => {
-    const typeOrder = { overdue: 0, received: 1, standardized: 2 };
-    if (typeOrder[a.type] !== typeOrder[b.type]) return typeOrder[a.type] - typeOrder[b.type];
-    if (a.type === 'overdue' && b.type === 'overdue') return (b.daysOverdue || 0) - (a.daysOverdue || 0);
-    return a.vehicleId.localeCompare(b.vehicleId);
-  });
-
+  items.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
   return items;
+}
+
+function recentChangesToAlerts(changes: RecentChangeRow[]): AlertItem[] {
+  return changes.map(c => ({
+    type: c.notification_type as 'received' | 'standardized',
+    vehicleId: c.vehicle_id,
+    quarter: c.quarter,
+    deliverable: c.deliverable,
+    detail: c.notification_type === 'standardized'
+      ? `Standardized — ready for analysis`
+      : `${c.deliverable} received`,
+    tbv: '',
+  }));
 }
 
 function alertTypeIcon(type: AlertItem['type']) {
@@ -721,15 +721,57 @@ function alertTypeBadge(type: AlertItem['type']): string {
 type AlertFilter = 'all' | 'overdue' | 'received' | 'standardized';
 
 function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[]; onVehicleClick: (id: string) => void }) {
-  const alerts = useMemo(() => computeAlerts(records), [records]);
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<AlertFilter>('all');
   const [isExpanded, setIsExpanded] = useState(true);
+  const [dismissing, setDismissing] = useState<string | null>(null);
 
-  const overdueCount = alerts.filter(a => a.type === 'overdue').length;
-  const receivedCount = alerts.filter(a => a.type === 'received').length;
-  const standardizedCount = alerts.filter(a => a.type === 'standardized').length;
+  const { data: recentChanges = [] } = useQuery({
+    queryKey: ['recentChanges'],
+    queryFn: () => getRecentChanges(),
+    staleTime: 60 * 1000,
+  });
 
-  const filtered = filter === 'all' ? alerts : alerts.filter(a => a.type === filter);
+  const { data: dismissedRows = [] } = useQuery({
+    queryKey: ['dismissedOverdue'],
+    queryFn: () => getDismissedOverdue(),
+    staleTime: 60 * 1000,
+  });
+
+  const dismissedSet = useMemo(() => {
+    return new Set(dismissedRows.map(d => `${d.vehicle_id}|${d.quarter}|${d.deliverable}`));
+  }, [dismissedRows]);
+
+  const overdueAlerts = useMemo(() => computeOverdueAlerts(records, dismissedSet), [records, dismissedSet]);
+  const changeAlerts = useMemo(() => recentChangesToAlerts(recentChanges), [recentChanges]);
+
+  const allAlerts = useMemo(() => {
+    const combined: AlertItem[] = [...overdueAlerts, ...changeAlerts];
+    combined.sort((a, b) => {
+      const typeOrder = { overdue: 0, received: 1, standardized: 2 };
+      if (typeOrder[a.type] !== typeOrder[b.type]) return typeOrder[a.type] - typeOrder[b.type];
+      if (a.type === 'overdue' && b.type === 'overdue') return (b.daysOverdue || 0) - (a.daysOverdue || 0);
+      return a.vehicleId.localeCompare(b.vehicleId);
+    });
+    return combined;
+  }, [overdueAlerts, changeAlerts]);
+
+  const overdueCount = overdueAlerts.length;
+  const receivedCount = changeAlerts.filter(a => a.type === 'received').length;
+  const standardizedCount = changeAlerts.filter(a => a.type === 'standardized').length;
+
+  const filtered = filter === 'all' ? allAlerts : allAlerts.filter(a => a.type === filter);
+
+  const handleDismiss = useCallback(async (alert: AlertItem) => {
+    const key = `${alert.vehicleId}|${alert.quarter}|${alert.deliverable}`;
+    setDismissing(key);
+    try {
+      await dismissOverdueItem(alert.vehicleId, alert.quarter, alert.deliverable);
+      queryClient.invalidateQueries({ queryKey: ['dismissedOverdue'] });
+    } finally {
+      setDismissing(null);
+    }
+  }, [queryClient]);
 
   return (
     <div className="bg-white rounded-lg border border-[#E5E7EB] overflow-hidden">
@@ -752,8 +794,10 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
             <h2 className="text-sm font-semibold text-[#111827]">Alerts</h2>
             <p className="text-xs text-[#9CA3AF]">
               {overdueCount > 0
-                ? `${overdueCount} overdue, ${receivedCount} received, ${standardizedCount} standardized`
-                : 'All deliverables on track'
+                ? `${overdueCount} overdue${receivedCount > 0 ? `, ${receivedCount} received (7d)` : ''}${standardizedCount > 0 ? `, ${standardizedCount} standardized (7d)` : ''}`
+                : receivedCount > 0 || standardizedCount > 0
+                  ? `${receivedCount} received, ${standardizedCount} standardized in last 7 days`
+                  : 'All deliverables on track'
               }
             </p>
           </div>
@@ -776,10 +820,10 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
           {/* Filter tabs */}
           <div className="px-5 py-2 border-t border-[#F3F4F6] flex items-center gap-1.5">
             {([
-              { id: 'all' as const, label: 'All', count: alerts.length },
+              { id: 'all' as const, label: 'All', count: allAlerts.length },
               { id: 'overdue' as const, label: 'Overdue', count: overdueCount },
-              { id: 'received' as const, label: 'Received', count: receivedCount },
-              { id: 'standardized' as const, label: 'Standardized', count: standardizedCount },
+              { id: 'received' as const, label: 'Received (7d)', count: receivedCount },
+              { id: 'standardized' as const, label: 'Standardized (7d)', count: standardizedCount },
             ]).map(t => (
               <button
                 key={t.id}
@@ -800,28 +844,46 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
           <div className="max-h-[320px] overflow-y-auto divide-y divide-[#F3F4F6] border-t border-[#F3F4F6]">
             {filtered.length === 0 ? (
               <div className="px-5 py-6 text-center text-sm text-[#9CA3AF]">
-                No {filter === 'all' ? '' : filter} alerts
+                {filter === 'received' || filter === 'standardized'
+                  ? `No ${filter} deliverables in the last 7 days`
+                  : filter === 'overdue'
+                    ? 'No overdue deliverables'
+                    : 'No alerts'
+                }
               </div>
             ) : (
-              filtered.map((alert, idx) => (
-                <div
-                  key={`${alert.vehicleId}-${alert.quarter}-${alert.deliverable}-${alert.type}-${idx}`}
-                  className="px-5 py-2.5 flex items-center gap-3 hover:bg-[#F9FAFB] transition-colors"
-                >
-                  {alertTypeIcon(alert.type)}
-                  <button
-                    onClick={() => onVehicleClick(alert.vehicleId)}
-                    className="text-sm font-medium text-[#1E4B7A] hover:underline shrink-0 min-w-[140px] text-left"
+              filtered.map((alert, idx) => {
+                const dismissKey = `${alert.vehicleId}|${alert.quarter}|${alert.deliverable}`;
+                return (
+                  <div
+                    key={`${alert.vehicleId}-${alert.quarter}-${alert.deliverable}-${alert.type}-${idx}`}
+                    className="px-5 py-2.5 flex items-center gap-3 hover:bg-[#F9FAFB] transition-colors"
                   >
-                    {alert.vehicleId}
-                  </button>
-                  <span className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0', alertTypeBadge(alert.type))}>
-                    {alert.deliverable}
-                  </span>
-                  <span className="text-xs text-[#6B7280] truncate flex-1">{alert.detail}</span>
-                  <span className="text-[10px] text-[#9CA3AF] shrink-0">{alert.quarter}</span>
-                </div>
-              ))
+                    {alertTypeIcon(alert.type)}
+                    <button
+                      onClick={() => onVehicleClick(alert.vehicleId)}
+                      className="text-sm font-medium text-[#1E4B7A] hover:underline shrink-0 min-w-[140px] text-left"
+                    >
+                      {alert.vehicleId}
+                    </button>
+                    <span className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0', alertTypeBadge(alert.type))}>
+                      {alert.deliverable}
+                    </span>
+                    <span className="text-xs text-[#6B7280] truncate flex-1">{alert.detail}</span>
+                    <span className="text-[10px] text-[#9CA3AF] shrink-0">{alert.quarter}</span>
+                    {alert.type === 'overdue' && (
+                      <button
+                        onClick={() => handleDismiss(alert)}
+                        disabled={dismissing === dismissKey}
+                        title="Mark as irrelevant — stops notifications for this item"
+                        className="p-1 rounded hover:bg-red-50 text-[#9CA3AF] hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </>

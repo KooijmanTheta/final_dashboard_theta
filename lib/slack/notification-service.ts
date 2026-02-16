@@ -164,9 +164,17 @@ async function filterAlreadySent(items: OverdueItem[]): Promise<OverdueItem[]> {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+async function getDismissedKeys(): Promise<Set<string>> {
+  const rows = await sql`SELECT vehicle_id, quarter, deliverable FROM tracking.dismissed_overdue`;
+  return new Set(rows.map(r => `${r.vehicle_id}|${r.quarter}|${r.deliverable}`));
+}
+
 export async function sendOverdueAlerts(): Promise<{ sent: number; skipped: number; errors: string[] }> {
   const records = await getMonitoringRecords();
-  const allOverdue = findOverdueItems(records);
+  const dismissedKeys = await getDismissedKeys();
+  const allOverdue = findOverdueItems(records).filter(item =>
+    !dismissedKeys.has(`${item.vehicleId}|${item.quarter}|${item.deliverable}`)
+  );
   const toSend = await filterAlreadySent(allOverdue);
   const errors: string[] = [];
 
