@@ -1,5 +1,7 @@
 'use server';
 
+import sql from '@/lib/db';
+
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_MONITORING_BASE_ID;
 const AIRTABLE_TABLE_ID = process.env.AIRTABLE_MONITORING_TABLE_ID;
@@ -15,6 +17,7 @@ export interface MonitoringRecord {
   hasAnyPortfolio: boolean;
   hasFinancials: boolean;
   hasLpUpdate: boolean;
+  hasStandardizedRounds: boolean;
   portfolioActionItem: string | null;
   tbvFunds: string[];
 }
@@ -45,6 +48,7 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
     'tbv_fund (from closing) (from vehicle_id)',
     'financials',
     'lp_updates',
+    'standardized_rounds_v2',
   ];
 
   do {
@@ -78,11 +82,13 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
       const financialsAttachments = Array.isArray(f.financials) ? f.financials : [];
       // lp_updates is a linked record field — array of record IDs when present
       const lpUpdateLinks = Array.isArray(f.lp_updates) ? f.lp_updates : [];
+      const standardizedRoundsAttachments = Array.isArray(f.standardized_rounds_v2) ? f.standardized_rounds_v2 : [];
 
       const hasPortfolio = portfolioAttachments.length > 0;
       const hasStandardized = standardizedAttachments.length > 0;
       const hasFinancials = financialsAttachments.length > 0;
       const hasLpUpdate = lpUpdateLinks.length > 0;
+      const hasStandardizedRounds = standardizedRoundsAttachments.length > 0;
 
       // tbv_fund is a lookup array, may contain duplicates
       const rawTbv = f['tbv_fund (from closing) (from vehicle_id)'];
@@ -99,6 +105,7 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
         hasAnyPortfolio: hasPortfolio || hasStandardized,
         hasFinancials,
         hasLpUpdate,
+        hasStandardizedRounds,
         portfolioActionItem: f.portfolio_action_item || null,
         tbvFunds,
       });
@@ -111,4 +118,30 @@ export async function getMonitoringRecords(): Promise<MonitoringRecord[]> {
   return allRecords
     .map(r => ({ ...r, tbvFunds: r.tbvFunds.filter(t => VALID_TBVS.has(t)) }))
     .filter(r => r.tbvFunds.length > 0);
+}
+
+// ============================================================================
+// NAV data from at_ledger_db
+// ============================================================================
+
+export interface NavEntry {
+  vehicleId: string;
+  dateReported: string;
+  navType: string;
+}
+
+export async function getNavSummary(): Promise<NavEntry[]> {
+  const rows = await sql`
+    SELECT DISTINCT c.closing_id AS vehicle_id, l.date_reported::text, l.nav_type
+    FROM at_tables.at_ledger_db l
+    JOIN at_tables.at_closing_db c
+      ON c.tbv_vehicle_id = l.tbv_vehicle_id
+    WHERE l.tbv_vehicle_id IS NOT NULL
+      AND c.closing_id IS NOT NULL
+  `;
+  return rows.map((r: Record<string, unknown>) => ({
+    vehicleId: r.vehicle_id as string,
+    dateReported: r.date_reported as string,
+    navType: r.nav_type as string,
+  }));
 }

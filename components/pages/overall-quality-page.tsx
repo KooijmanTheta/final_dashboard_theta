@@ -3,8 +3,8 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, X, FileText, BarChart3, DollarSign, AlertTriangle, CheckCircle2, Clock, MessageSquare, Hash, Bell, BellOff, XCircle } from 'lucide-react';
-import { getMonitoringRecords, type MonitoringRecord } from '@/actions/overall-quality';
-import { getNotificationsForVehicle, type SlackNotificationRow, getRecentChanges, type RecentChangeRow, getDismissedOverdue, type DismissedRow, dismissOverdueItem } from '@/actions/slack-notifications';
+import { getMonitoringRecords, type MonitoringRecord, getNavSummary, type NavEntry } from '@/actions/overall-quality';
+import { getNotificationsForVehicle, type SlackNotificationRow, getRecentChanges, type RecentChangeRow, getDismissedOverdue, type DismissedRow, dismissOverdueItem, pushVehicleNotification } from '@/actions/slack-notifications';
 import { cn } from '@/lib/utils';
 
 // ============================================================================
@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 type CellStatus = 'Done' | "Recv'd" | 'LATE' | 'Expected' | 'N/A' | '-';
 
-const CYCLE_COLUMNS = ['Standardized Portfolio', 'LP Letter', 'Portfolio/SOI'] as const;
+const CYCLE_COLUMNS = ['Standardized Portfolio', 'LP Letter', 'Portfolio/SOI', 'Standardized Rounds', 'NAV'] as const;
 
 interface CellFraction {
   missing: number;
@@ -26,6 +26,7 @@ interface VehicleCycleRow {
   portfolio: CellFraction;
   lpLetter: CellFraction;
   financials: CellFraction;
+  standardizedRounds: CellFraction;
 }
 
 interface TbvCycleGroup {
@@ -34,6 +35,11 @@ interface TbvCycleGroup {
   portfolioCount: number;
   totalVehicles: number;
   pct: number;
+}
+
+interface NavInfo {
+  totalCount: number;
+  quarterData: Map<string, { count: number; types: string[] }>;
 }
 
 interface DeliverableRow {
@@ -124,6 +130,36 @@ function getLastNQuarters(n: number): string[] {
   return quarters.reverse(); // oldest first
 }
 
+function dateToQuarter(dateStr: string): string {
+  const d = new Date(dateStr);
+  const q = Math.floor(d.getMonth() / 3) + 1;
+  return `Q${q} ${d.getFullYear()}`;
+}
+
+function buildNavMap(entries: NavEntry[]): Map<string, NavInfo> {
+  const map = new Map<string, NavInfo>();
+  for (const entry of entries) {
+    if (!entry.vehicleId || !entry.dateReported) continue;
+    let info = map.get(entry.vehicleId);
+    if (!info) {
+      info = { totalCount: 0, quarterData: new Map() };
+      map.set(entry.vehicleId, info);
+    }
+    info.totalCount++;
+    const quarter = dateToQuarter(entry.dateReported);
+    let qd = info.quarterData.get(quarter);
+    if (!qd) {
+      qd = { count: 0, types: [] };
+      info.quarterData.set(quarter, qd);
+    }
+    qd.count++;
+    if (entry.navType && !qd.types.includes(entry.navType)) {
+      qd.types.push(entry.navType);
+    }
+  }
+  return map;
+}
+
 interface DueDeliverable {
   dueDate: string;
   deliverable: string;
@@ -156,17 +192,20 @@ function deriveRow(vehicleId: string, allRecords: MonitoringRecord[]): VehicleCy
   const stdPortfolioHas = new Set(allRecords.filter(r => r.hasStandardizedPortfolio).map(r => r.quarter));
   const lpHas = new Set(allRecords.filter(r => r.hasLpUpdate).map(r => r.quarter));
   const portfolioSoiHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasFinancials).map(r => r.quarter));
+  const stdRoundsHas = new Set(allRecords.filter(r => r.hasStandardizedRounds).map(r => r.quarter));
 
   // Missing = all expected quarters minus the ones that have it
   const stdPortfolioMissing = allQuarters.filter(q => !stdPortfolioHas.has(q));
   const lpMissing = allQuarters.filter(q => !lpHas.has(q));
   const portfolioSoiMissing = allQuarters.filter(q => !portfolioSoiHas.has(q));
+  const stdRoundsMissing = allQuarters.filter(q => !stdRoundsHas.has(q));
 
   return {
     vehicleId,
     portfolio: { missing: stdPortfolioMissing.length, total: totalQuarters, missingQuarters: stdPortfolioMissing },
     lpLetter: { missing: lpMissing.length, total: totalQuarters, missingQuarters: lpMissing },
     financials: { missing: portfolioSoiMissing.length, total: totalQuarters, missingQuarters: portfolioSoiMissing },
+    standardizedRounds: { missing: stdRoundsMissing.length, total: totalQuarters, missingQuarters: stdRoundsMissing },
   };
 }
 
@@ -176,16 +215,19 @@ function deriveRowForQuarter(vehicleId: string, allRecords: MonitoringRecord[], 
   const stdPortfolioHas = new Set(allRecords.filter(r => r.hasStandardizedPortfolio).map(r => r.quarter));
   const lpHas = new Set(allRecords.filter(r => r.hasLpUpdate).map(r => r.quarter));
   const portfolioSoiHas = new Set(allRecords.filter(r => r.hasAnyPortfolio || r.hasFinancials).map(r => r.quarter));
+  const stdRoundsHas = new Set(allRecords.filter(r => r.hasStandardizedRounds).map(r => r.quarter));
 
   const stdPortfolioMissing = allQuarters.filter(q => !stdPortfolioHas.has(q));
   const lpMissing = allQuarters.filter(q => !lpHas.has(q));
   const portfolioSoiMissing = allQuarters.filter(q => !portfolioSoiHas.has(q));
+  const stdRoundsMissing = allQuarters.filter(q => !stdRoundsHas.has(q));
 
   return {
     vehicleId,
     portfolio: { missing: stdPortfolioMissing.length, total: 1, missingQuarters: stdPortfolioMissing },
     lpLetter: { missing: lpMissing.length, total: 1, missingQuarters: lpMissing },
     financials: { missing: portfolioSoiMissing.length, total: 1, missingQuarters: portfolioSoiMissing },
+    standardizedRounds: { missing: stdRoundsMissing.length, total: 1, missingQuarters: stdRoundsMissing },
   };
 }
 
@@ -257,14 +299,14 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
   const missing: DueDeliverable[] = [];
 
   for (const rec of vehicleRecords) {
-    // Portfolio: due 60 days after quarter end
-    if (!rec.hasAnyPortfolio && !rec.hasStandardizedPortfolio) {
+    // Standardized Portfolio: due 60 days after quarter end
+    if (!rec.hasStandardizedPortfolio) {
       const due = portfolioDueDate(rec.quarter);
       if (due) {
         const days = daysLeft(due);
         missing.push({
           dueDate: formatDate(due),
-          deliverable: 'Portfolio',
+          deliverable: 'Standardized Portfolio',
           daysLeft: days,
           isOverdue: days < 0,
         });
@@ -273,7 +315,7 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
 
     // LP Letter: missing if no linked records
     if (!rec.hasLpUpdate) {
-      const due = portfolioDueDate(rec.quarter); // same timeline for now
+      const due = portfolioDueDate(rec.quarter);
       if (due) {
         const days = daysLeft(due);
         missing.push({
@@ -285,14 +327,14 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
       }
     }
 
-    // Financials: missing if no attachment
-    if (!rec.hasFinancials) {
+    // Portfolio/SOI: missing if neither portfolio nor financials
+    if (!rec.hasAnyPortfolio && !rec.hasFinancials) {
       const due = portfolioDueDate(rec.quarter);
       if (due) {
         const days = daysLeft(due);
         missing.push({
           dueDate: formatDate(due),
-          deliverable: 'Financials',
+          deliverable: 'Portfolio/SOI',
           daysLeft: days,
           isOverdue: days < 0,
         });
@@ -305,11 +347,13 @@ function getMissingDeliverables(vehicleId: string, vehicleRecords: MonitoringRec
   return missing;
 }
 
-function getFractionForColumn(row: VehicleCycleRow, col: typeof CYCLE_COLUMNS[number]): CellFraction {
+function getFractionForColumn(row: VehicleCycleRow, col: typeof CYCLE_COLUMNS[number]): CellFraction | null {
   switch (col) {
     case 'Standardized Portfolio': return row.portfolio;
     case 'LP Letter': return row.lpLetter;
     case 'Portfolio/SOI': return row.financials;
+    case 'Standardized Rounds': return row.standardizedRounds;
+    case 'NAV': return null; // handled separately
   }
 }
 
@@ -727,15 +771,15 @@ function computeOverdueAlerts(records: MonitoringRecord[], dismissed: Set<string
 
       const rec = byVehicleQuarter.get(`${vehicleId}|${quarter}`);
 
-      // If no record exists at all for this quarter, all 3 are missing
-      const hasPortfolio = rec ? (rec.hasAnyPortfolio || rec.hasStandardizedPortfolio) : false;
+      // If no record exists at all for this quarter, all are missing
+      const hasStdPortfolio = rec ? rec.hasStandardizedPortfolio : false;
       const hasLp = rec ? rec.hasLpUpdate : false;
-      const hasFin = rec ? rec.hasFinancials : false;
+      const hasPortfolioSoi = rec ? (rec.hasAnyPortfolio || rec.hasFinancials) : false;
 
-      if (!hasPortfolio) {
-        const key = `${vehicleId}|${quarter}|Portfolio`;
+      if (!hasStdPortfolio) {
+        const key = `${vehicleId}|${quarter}|Standardized Portfolio`;
         if (!dismissed.has(key)) {
-          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
+          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Standardized Portfolio', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
         }
       }
       if (!hasLp) {
@@ -744,10 +788,10 @@ function computeOverdueAlerts(records: MonitoringRecord[], dismissed: Set<string
           items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'LP Letter', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
         }
       }
-      if (!hasFin) {
-        const key = `${vehicleId}|${quarter}|Financials`;
+      if (!hasPortfolioSoi) {
+        const key = `${vehicleId}|${quarter}|Portfolio/SOI`;
         if (!dismissed.has(key)) {
-          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Financials', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
+          items.push({ type: 'overdue', vehicleId, quarter, deliverable: 'Portfolio/SOI', detail: `${daysOver}d overdue — due ${formatDate(due)}${!rec ? ' (no record)' : ''}`, daysOverdue: daysOver, tbv });
         }
       }
     }
@@ -787,7 +831,7 @@ function alertTypeBadge(type: AlertItem['type']): string {
 }
 
 type AlertFilter = 'all' | 'overdue' | 'received' | 'standardized';
-type DeliverableFilter = 'all' | 'Portfolio' | 'LP Letter' | 'Financials';
+type DeliverableFilter = 'all' | 'Standardized Portfolio' | 'LP Letter' | 'Portfolio/SOI';
 type QuarterFilter = 'all' | string;
 
 function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[]; onVehicleClick: (id: string) => void }) {
@@ -970,9 +1014,9 @@ function AlertsPanel({ records, onVehicleClick }: { records: MonitoringRecord[];
               className="text-xs border border-[#E5E7EB] rounded-md px-2 py-1 text-[#374151] bg-white focus:outline-none focus:ring-1 focus:ring-[#1E4B7A]"
             >
               <option value="all">All types</option>
-              <option value="Portfolio">Portfolio</option>
+              <option value="Standardized Portfolio">Std. Portfolio</option>
               <option value="LP Letter">LP Letter</option>
-              <option value="Financials">Financials</option>
+              <option value="Portfolio/SOI">Portfolio/SOI</option>
             </select>
 
             {/* Quarter dropdown */}
@@ -1074,6 +1118,14 @@ export function OverallQualityPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: navEntries = [] } = useQuery({
+    queryKey: ['navSummary'],
+    queryFn: () => getNavSummary(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const navMap = useMemo(() => buildNavMap(navEntries), [navEntries]);
+
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
 
   const tbvCycleGroups = useMemo(() => {
@@ -1135,6 +1187,7 @@ export function OverallQualityPage() {
           key={group.tbv}
           group={group}
           records={records}
+          navMap={navMap}
           onVehicleClick={setSelectedVehicle}
         />
       ))}
@@ -1198,14 +1251,69 @@ function FractionCell({ frac }: { frac: CellFraction }) {
 function TbvCycleSection({
   group,
   records,
+  navMap,
   onVehicleClick,
 }: {
   group: TbvCycleGroup;
   records: MonitoringRecord[];
+  navMap: Map<string, NavInfo>;
   onVehicleClick: (vehicleId: string) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedQuarter, setSelectedQuarter] = useState<string | null>(null);
+  const [pushingVehicle, setPushingVehicle] = useState<string | null>(null);
+
+  const handlePush = useCallback(async (vehicleId: string) => {
+    setPushingVehicle(vehicleId);
+    try {
+      // Gather missing deliverables for this vehicle
+      const vehicleRecords = records.filter(r => r.vehicleId === vehicleId);
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const expectedQuarters = getLastNQuarters(3);
+
+      const byQuarter = new Map<string, MonitoringRecord>();
+      for (const r of vehicleRecords) {
+        if (!r.quarter) continue;
+        const existing = byQuarter.get(r.quarter);
+        if (!existing || r.dateMemo > existing.dateMemo) {
+          byQuarter.set(r.quarter, r);
+        }
+      }
+
+      const missingItems: { deliverable: string; quarter: string; daysOverdue: number }[] = [];
+      for (const quarter of expectedQuarters) {
+        const due = portfolioDueDate(quarter);
+        if (!due) continue;
+        const days = daysLeft(due);
+        if (days >= 0) continue;
+        const daysOver = Math.abs(days);
+
+        const rec = byQuarter.get(quarter);
+        if (!rec?.hasStandardizedPortfolio) {
+          missingItems.push({ deliverable: 'Standardized Portfolio', quarter, daysOverdue: daysOver });
+        }
+        if (!rec?.hasLpUpdate) {
+          missingItems.push({ deliverable: 'LP Letter', quarter, daysOverdue: daysOver });
+        }
+        if (!rec?.hasAnyPortfolio && !rec?.hasFinancials) {
+          missingItems.push({ deliverable: 'Portfolio/SOI', quarter, daysOverdue: daysOver });
+        }
+      }
+
+      if (missingItems.length === 0) {
+        alert('No overdue deliverables to push for this vehicle.');
+        return;
+      }
+
+      const result = await pushVehicleNotification(vehicleId, missingItems, group.tbv);
+      if (!result.ok) {
+        alert(`Failed to send: ${result.error}`);
+      }
+    } finally {
+      setPushingVehicle(null);
+    }
+  }, [records, group.tbv]);
 
   const availableQuarters = useMemo(() => {
     const vehicleIds = new Set(group.vehicles.map(v => v.vehicleId));
@@ -1295,7 +1403,16 @@ function TbvCycleSection({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F3F4F6]">
-                {displayVehicles.map(row => (
+                {displayVehicles.map(row => {
+                  const navInfo = navMap.get(row.vehicleId);
+                  const navDisplay = selectedQuarter
+                    ? (() => {
+                        const qd = navInfo?.quarterData.get(selectedQuarter);
+                        return qd && qd.types.length > 0 ? qd.types.join(', ') : '—';
+                      })()
+                    : navInfo ? String(navInfo.totalCount) : '—';
+
+                  return (
                   <tr key={row.vehicleId} className="hover:bg-[#F9FAFB]">
                     <td className="px-4 py-2.5">
                       <button
@@ -1305,13 +1422,35 @@ function TbvCycleSection({
                         {row.vehicleId}
                       </button>
                     </td>
-                    {CYCLE_COLUMNS.map(col => (
-                      <FractionCell key={col} frac={getFractionForColumn(row, col)} />
-                    ))}
+                    {CYCLE_COLUMNS.map(col => {
+                      if (col === 'NAV') {
+                        return (
+                          <td key={col} className="px-3 py-2.5 text-center">
+                            <span className={cn(
+                              'inline-flex px-2 py-0.5 rounded-full text-xs font-medium',
+                              navDisplay === '—' ? 'bg-gray-50 text-gray-400' : 'bg-indigo-50 text-indigo-700'
+                            )}>
+                              {navDisplay}
+                            </span>
+                          </td>
+                        );
+                      }
+                      const frac = getFractionForColumn(row, col);
+                      return frac ? <FractionCell key={col} frac={frac} /> : null;
+                    })}
                     <td className="px-3 py-2.5 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
-                          Push
+                        <button
+                          onClick={() => handlePush(row.vehicleId)}
+                          disabled={pushingVehicle === row.vehicleId}
+                          className={cn(
+                            "px-2 py-0.5 text-xs font-medium rounded border transition-colors",
+                            pushingVehicle === row.vehicleId
+                              ? "border-[#E5E7EB] text-[#9CA3AF] bg-[#F3F4F6] cursor-wait"
+                              : "border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6]"
+                          )}
+                        >
+                          {pushingVehicle === row.vehicleId ? 'Sending...' : 'Push'}
                         </button>
                         <button className="px-2 py-0.5 text-xs font-medium rounded border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] transition-colors">
                           Snooze
@@ -1319,7 +1458,8 @@ function TbvCycleSection({
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

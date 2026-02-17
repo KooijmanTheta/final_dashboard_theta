@@ -1,6 +1,7 @@
 'use server';
 
 import sql from '@/lib/db';
+import { postBotMessage } from '@/lib/slack/client';
 
 export interface SlackNotificationRow {
   notification_type: string;
@@ -83,4 +84,69 @@ export async function undismissOverdueItem(vehicleId: string, quarter: string, d
     DELETE FROM tracking.dismissed_overdue
     WHERE vehicle_id = ${vehicleId} AND quarter = ${quarter} AND deliverable = ${deliverable}
   `;
+}
+
+// ─── Push vehicle notification to Slack ───────────────────────────────────────
+
+export interface PushResult {
+  ok: boolean;
+  error?: string;
+}
+
+export async function pushVehicleNotification(
+  vehicleId: string,
+  missingItems: { deliverable: string; quarter: string; daysOverdue: number }[],
+  tbv: string,
+): Promise<PushResult> {
+  const channelId = process.env.SLACK_CHANNEL_ID;
+  if (!channelId) {
+    return { ok: false, error: 'SLACK_CHANNEL_ID not configured' };
+  }
+
+  const blocks: Record<string, unknown>[] = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: `📋 Follow-up: ${vehicleId}`, emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${missingItems.length}* outstanding deliverable${missingItems.length !== 1 ? 's' : ''} for *${vehicleId}*${tbv ? ` (_${tbv}_)` : ''}`,
+      },
+    },
+    { type: 'divider' },
+  ];
+
+  const lines = missingItems.map(item =>
+    `• *${item.deliverable}* — ${item.quarter} · ${item.daysOverdue}d overdue`
+  );
+  blocks.push({
+    type: 'section',
+    text: { type: 'mrkdwn', text: lines.join('\n') },
+  });
+
+  blocks.push({
+    type: 'context',
+    elements: [{
+      type: 'mrkdwn',
+      text: `Pushed from <https://final-dashboard-thetav1.vercel.app/fund-monitoring?tab=data-quality|Theta Dashboard>`,
+    }],
+  });
+
+  const result = await postBotMessage(channelId, blocks, `Follow-up: ${vehicleId}`);
+
+  // Log the push notification
+  try {
+    await sql`
+      INSERT INTO tracking.slack_notifications
+        (notification_type, vehicle_id, quarter, deliverable, days_overdue, message_payload, http_status, error_message)
+      VALUES
+        ('push', ${vehicleId}, ${missingItems[0]?.quarter || null}, ${null}, ${null}, ${JSON.stringify({ blocks })}, ${result.httpStatus ?? null}, ${result.error ?? null})
+    `;
+  } catch {
+    // non-critical — don't fail the push if logging fails
+  }
+
+  return { ok: result.ok, error: result.error };
 }

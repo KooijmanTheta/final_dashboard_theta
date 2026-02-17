@@ -285,3 +285,164 @@ export async function getDataQualityProjects(params: {
     return { projects: [], totalCount: 0, page: 1, pageSize: 50, totalPages: 1 };
   }
 }
+
+// ============================================================================
+// Position-Level Data Quality
+// ============================================================================
+
+export interface PositionQualityRow {
+  ownership_id: string;
+  project_id: string | null;
+  has_outcome_type: boolean;
+  has_established_type: boolean;
+  has_rounds_id: boolean;
+  has_entry_valuation: boolean;
+  filled_count: number;
+}
+
+export interface VehiclePositionSummary {
+  vehicle_id: string;
+  tbv_fund: string;
+  total: number;
+  complete: number;
+  missing_outcome: number;
+  missing_established: number;
+  missing_rounds: number;
+  missing_valuation: number;
+}
+
+export interface PositionQualityStats {
+  total: number;
+  fullyComplete: number;
+  needsAttention: number;
+  fieldRates: {
+    outcome_type: number;
+    established_type: number;
+    rounds_id: number;
+    entry_valuation: number;
+  };
+}
+
+/** Get per-vehicle summary + global stats */
+export async function getPositionQualitySummary(): Promise<{
+  vehicles: VehiclePositionSummary[];
+  stats: PositionQualityStats;
+}> {
+  try {
+    const rows = await sql<{
+      vehicle_id: string;
+      tbv_fund: string | null;
+      total: number;
+      complete: number;
+      missing_outcome: number;
+      missing_established: number;
+      missing_rounds: number;
+      missing_valuation: number;
+    }[]>`
+      SELECT
+        o.vehicle_id,
+        MIN(c.tbv_fund) as tbv_fund,
+        COUNT(*)::int as total,
+        COUNT(*) FILTER (WHERE
+          (o.outcome_type IS NOT NULL AND o.outcome_type != '') AND
+          (o.established_type IS NOT NULL AND o.established_type != '') AND
+          (o.rounds_id IS NOT NULL AND o.rounds_id != '') AND
+          (o.entry_valuation_token IS NOT NULL OR o.entry_valuation_equity IS NOT NULL)
+        )::int as complete,
+        COUNT(*) FILTER (WHERE o.outcome_type IS NULL OR o.outcome_type = '')::int as missing_outcome,
+        COUNT(*) FILTER (WHERE o.established_type IS NULL OR o.established_type = '')::int as missing_established,
+        COUNT(*) FILTER (WHERE o.rounds_id IS NULL OR o.rounds_id = '')::int as missing_rounds,
+        COUNT(*) FILTER (WHERE o.entry_valuation_token IS NULL AND o.entry_valuation_equity IS NULL)::int as missing_valuation
+      FROM at_tables.at_ownership_db_v2 o
+      JOIN at_tables.at_closing_db c ON c.closing_id = o.vehicle_id
+      WHERE o.vehicle_id IS NOT NULL AND o.vehicle_id != ''
+        AND c.tbv_fund IS NOT NULL AND c.tbv_fund != '' AND c.tbv_fund != 'TBV0'
+      GROUP BY o.vehicle_id
+      ORDER BY MIN(c.tbv_fund), o.vehicle_id
+    `;
+
+    const vehicles: VehiclePositionSummary[] = rows.map(r => ({
+      vehicle_id: r.vehicle_id,
+      tbv_fund: r.tbv_fund || 'Unknown',
+      total: toNumber(r.total),
+      complete: toNumber(r.complete),
+      missing_outcome: toNumber(r.missing_outcome),
+      missing_established: toNumber(r.missing_established),
+      missing_rounds: toNumber(r.missing_rounds),
+      missing_valuation: toNumber(r.missing_valuation),
+    }));
+
+    const total = vehicles.reduce((s, v) => s + v.total, 0);
+    const fullyComplete = vehicles.reduce((s, v) => s + v.complete, 0);
+    const missingOutcome = vehicles.reduce((s, v) => s + v.missing_outcome, 0);
+    const missingEstablished = vehicles.reduce((s, v) => s + v.missing_established, 0);
+    const missingRounds = vehicles.reduce((s, v) => s + v.missing_rounds, 0);
+    const missingValuation = vehicles.reduce((s, v) => s + v.missing_valuation, 0);
+
+    return {
+      vehicles,
+      stats: {
+        total,
+        fullyComplete,
+        needsAttention: total - fullyComplete,
+        fieldRates: {
+          outcome_type: total > 0 ? Math.round((1 - missingOutcome / total) * 1000) / 10 : 0,
+          established_type: total > 0 ? Math.round((1 - missingEstablished / total) * 1000) / 10 : 0,
+          rounds_id: total > 0 ? Math.round((1 - missingRounds / total) * 1000) / 10 : 0,
+          entry_valuation: total > 0 ? Math.round((1 - missingValuation / total) * 1000) / 10 : 0,
+        },
+      },
+    };
+  } catch (error) {
+    console.error('Error fetching position quality summary:', error);
+    return {
+      vehicles: [],
+      stats: { total: 0, fullyComplete: 0, needsAttention: 0, fieldRates: { outcome_type: 0, established_type: 0, rounds_id: 0, entry_valuation: 0 } },
+    };
+  }
+}
+
+/** Get individual positions for a specific vehicle */
+export async function getPositionsByVehicle(vehicleId: string): Promise<PositionQualityRow[]> {
+  try {
+    const rows = await sql<{
+      ownership_id: string;
+      project_id: string | null;
+      has_outcome_type: boolean;
+      has_established_type: boolean;
+      has_rounds_id: boolean;
+      has_entry_valuation: boolean;
+      filled_count: number;
+    }[]>`
+      SELECT
+        o.ownership_id,
+        o.project_id,
+        (o.outcome_type IS NOT NULL AND o.outcome_type != '') as has_outcome_type,
+        (o.established_type IS NOT NULL AND o.established_type != '') as has_established_type,
+        (o.rounds_id IS NOT NULL AND o.rounds_id != '') as has_rounds_id,
+        (o.entry_valuation_token IS NOT NULL OR o.entry_valuation_equity IS NOT NULL) as has_entry_valuation,
+        (
+          CASE WHEN o.outcome_type IS NOT NULL AND o.outcome_type != '' THEN 1 ELSE 0 END +
+          CASE WHEN o.established_type IS NOT NULL AND o.established_type != '' THEN 1 ELSE 0 END +
+          CASE WHEN o.rounds_id IS NOT NULL AND o.rounds_id != '' THEN 1 ELSE 0 END +
+          CASE WHEN o.entry_valuation_token IS NOT NULL OR o.entry_valuation_equity IS NOT NULL THEN 1 ELSE 0 END
+        )::int as filled_count
+      FROM at_tables.at_ownership_db_v2 o
+      WHERE o.vehicle_id = ${vehicleId}
+      ORDER BY filled_count ASC, o.ownership_id ASC
+    `;
+
+    return rows.map(r => ({
+      ownership_id: r.ownership_id,
+      project_id: r.project_id || null,
+      has_outcome_type: r.has_outcome_type,
+      has_established_type: r.has_established_type,
+      has_rounds_id: r.has_rounds_id,
+      has_entry_valuation: r.has_entry_valuation,
+      filled_count: toNumber(r.filled_count),
+    }));
+  } catch (error) {
+    console.error('Error fetching positions for vehicle:', error);
+    return [];
+  }
+}

@@ -1,15 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getDataQualityStats,
   getDataQualityProjects,
+  getPositionQualitySummary,
+  getPositionsByVehicle,
   type DataQualityStats,
   type DataQualityProject,
   type DataQualityProjectsResult,
+  type VehiclePositionSummary,
+  type PositionQualityRow,
 } from '@/actions/data-quality';
 import { OverallQualityPage } from '@/components/pages/overall-quality-page';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DataQualityPageProps {
@@ -17,7 +22,7 @@ interface DataQualityPageProps {
   portfolioDate: string;
 }
 
-type DataQualitySubTab = 'overall-quality' | 'project-enrichment';
+type DataQualitySubTab = 'overall-quality' | 'project-level' | 'position-level';
 
 const KEY_FIELDS = [
   { key: 'coingecko_id', label: 'CoinGecko ID' },
@@ -63,7 +68,8 @@ export function DataQualityPage({ vehicleId, portfolioDate }: DataQualityPagePro
       <div className="flex items-center gap-1 border-b border-[#E5E7EB]">
         {([
           { id: 'overall-quality' as const, label: 'Overall Quality' },
-          { id: 'project-enrichment' as const, label: 'Project Enrichment' },
+          { id: 'project-level' as const, label: 'Project Level' },
+          { id: 'position-level' as const, label: 'Position Level' },
         ]).map(t => (
           <button
             key={t.id}
@@ -83,8 +89,11 @@ export function DataQualityPage({ vehicleId, portfolioDate }: DataQualityPagePro
       {subTab === 'overall-quality' && (
         <OverallQualityPage />
       )}
-      {subTab === 'project-enrichment' && (
+      {subTab === 'project-level' && (
         <ProjectEnrichmentContent vehicleId={vehicleId} portfolioDate={portfolioDate} />
+      )}
+      {subTab === 'position-level' && (
+        <PositionLevelContent vehicleId={vehicleId} portfolioDate={portfolioDate} />
       )}
     </div>
   );
@@ -446,4 +455,248 @@ function generatePageNumbers(current: number, total: number): (number | '...')[]
 function FieldCell({ value }: { value: string | null }) {
   if (!value) return <span className="text-[#D1D5DB]">&mdash;</span>;
   return <span className="text-[#111827]">{value}</span>;
+}
+
+// ============================================================================
+// Position Level Content — grouped by vehicle as dropdowns
+// ============================================================================
+
+const POSITION_FIELDS = [
+  { key: 'outcome_type', label: 'Outcome Type' },
+  { key: 'established_type', label: 'Established Type' },
+  { key: 'rounds_id', label: 'Rounds ID' },
+  { key: 'entry_valuation', label: 'Entry Valuation' },
+] as const;
+
+type PositionFieldKey = typeof POSITION_FIELDS[number]['key'];
+
+function BoolDot({ value }: { value: boolean }) {
+  return (
+    <span className={cn(
+      'inline-block w-2.5 h-2.5 rounded-full',
+      value ? 'bg-emerald-500' : 'bg-red-400'
+    )} />
+  );
+}
+
+function PositionLevelContent({ vehicleId }: DataQualityPageProps) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['positionQualitySummary'],
+    queryFn: () => getPositionQualitySummary(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const stats = data?.stats || { total: 0, fullyComplete: 0, needsAttention: 0, fieldRates: { outcome_type: 0, established_type: 0, rounds_id: 0, entry_valuation: 0 } };
+  const vehicles = data?.vehicles || [];
+
+  // If global filter is set, only show that vehicle
+  const filteredVehicles = vehicleId
+    ? vehicles.filter(v => v.vehicle_id === vehicleId)
+    : vehicles;
+
+  // Group by TBV
+  const tbvGroups = useMemo(() => {
+    const map = new Map<string, VehiclePositionSummary[]>();
+    for (const v of filteredVehicles) {
+      const tbv = v.tbv_fund;
+      const list = map.get(tbv) || [];
+      list.push(v);
+      map.set(tbv, list);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [filteredVehicles]);
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-lg border border-[#E5E7EB] p-8">
+        <div className="text-center text-[#6B7280]">Loading position-level quality data...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg border border-[#E5E7EB] p-4">
+          <p className="text-xs text-[#6B7280] uppercase tracking-wide">Total Positions</p>
+          <p className="font-mono text-2xl font-semibold text-[#111827] mt-1">{stats.total.toLocaleString()}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-[#E5E7EB] p-4">
+          <p className="text-xs text-[#6B7280] uppercase tracking-wide">Fully Complete</p>
+          <p className="font-mono text-2xl font-semibold text-[#10B981] mt-1">{stats.fullyComplete.toLocaleString()}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-[#E5E7EB] p-4">
+          <p className="text-xs text-[#6B7280] uppercase tracking-wide">Needs Attention</p>
+          <p className="font-mono text-2xl font-semibold text-[#EF4444] mt-1">{stats.needsAttention.toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Field Fill Rates */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {POSITION_FIELDS.map(({ key, label }) => {
+          const rate = stats.fieldRates[key as PositionFieldKey] || 0;
+          return (
+            <div
+              key={key}
+              className="bg-white rounded-lg border border-[#E5E7EB] p-4"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium text-[#111827]">{label}</p>
+                <p className="text-sm font-mono text-[#6B7280]">{rate.toFixed(1)}%</p>
+              </div>
+              <div className="w-full h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#1E4B7A] rounded-full transition-all"
+                  style={{ width: `${Math.min(rate, 100)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* TBV → Vehicle → Positions hierarchy */}
+      <div className="space-y-3">
+        {tbvGroups.length === 0 ? (
+          <div className="bg-white rounded-lg border border-[#E5E7EB] p-8 text-center text-sm text-[#6B7280]">
+            No vehicles found
+          </div>
+        ) : (
+          tbvGroups.map(([tbv, tbvVehicles]) => (
+            <TbvPositionSection key={tbv} tbv={tbv} vehicles={tbvVehicles} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TbvPositionSection({ tbv, vehicles }: { tbv: string; vehicles: VehiclePositionSummary[] }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const totalPositions = vehicles.reduce((s, v) => s + v.total, 0);
+  const totalComplete = vehicles.reduce((s, v) => s + v.complete, 0);
+  const pct = totalPositions > 0 ? Math.round((totalComplete / totalPositions) * 100) : 0;
+
+  return (
+    <div className="bg-white rounded-lg border border-[#E5E7EB] overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(prev => !prev)}
+        className="w-full px-6 py-3 bg-[#1E4B7A] text-white flex items-center justify-between hover:bg-[#1a4068] transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          {isExpanded
+            ? <ChevronDown className="h-4 w-4 opacity-70" />
+            : <ChevronRight className="h-4 w-4 opacity-70" />
+          }
+          <h2 className="text-sm font-semibold">{tbv}</h2>
+          <span className={cn('text-sm font-mono', pct === 100 ? 'text-emerald-300' : pct >= 80 ? 'text-amber-300' : 'text-red-300')}>
+            ({totalComplete}/{totalPositions} complete)
+          </span>
+        </div>
+        <span className="text-xs opacity-70">{vehicles.length} vehicles</span>
+      </button>
+
+      {isExpanded && (
+        <div className="divide-y divide-[#E5E7EB]">
+          {vehicles.map(v => (
+            <VehiclePositionDropdown key={v.vehicle_id} summary={v} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VehiclePositionDropdown({ summary }: { summary: VehiclePositionSummary }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const { data: positions = [], isLoading } = useQuery({
+    queryKey: ['positionsByVehicle', summary.vehicle_id],
+    queryFn: () => getPositionsByVehicle(summary.vehicle_id),
+    enabled: isExpanded,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const incomplete = summary.total - summary.complete;
+  const pct = summary.total > 0 ? Math.round((summary.complete / summary.total) * 100) : 0;
+
+  return (
+    <div>
+      <button
+        onClick={() => setIsExpanded(prev => !prev)}
+        className="w-full px-5 pl-10 py-2.5 flex items-center justify-between hover:bg-[#F9FAFB] transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          {isExpanded
+            ? <ChevronDown className="h-3.5 w-3.5 text-[#6B7280]" />
+            : <ChevronRight className="h-3.5 w-3.5 text-[#6B7280]" />
+          }
+          <span className="text-sm font-medium text-[#111827]">{summary.vehicle_id}</span>
+          <span className="text-xs text-[#9CA3AF]">{summary.total} positions</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={cn(
+            'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+            pct === 100 ? 'bg-emerald-100 text-emerald-800' :
+            pct >= 80 ? 'bg-amber-100 text-amber-800' :
+            'bg-red-50 text-red-700'
+          )}>
+            {summary.complete}/{summary.total} complete
+          </span>
+          {incomplete > 0 && (
+            <div className="flex items-center gap-2 text-[10px] text-[#6B7280]">
+              {summary.missing_outcome > 0 && <span>Outcome: {summary.missing_outcome}</span>}
+              {summary.missing_established > 0 && <span>Established: {summary.missing_established}</span>}
+              {summary.missing_rounds > 0 && <span>Rounds: {summary.missing_rounds}</span>}
+              {summary.missing_valuation > 0 && <span>Valuation: {summary.missing_valuation}</span>}
+            </div>
+          )}
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="border-t border-[#F3F4F6]">
+          {isLoading ? (
+            <div className="px-5 py-6 text-center text-sm text-[#6B7280]">Loading positions...</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-[#F9FAFB] text-left text-xs text-[#6B7280] uppercase tracking-wide">
+                    <th className="px-4 py-2 font-medium">Ownership ID</th>
+                    <th className="px-4 py-2 font-medium">Project</th>
+                    <th className="px-4 py-2 font-medium text-center">Score</th>
+                    <th className="px-4 py-2 font-medium text-center">Outcome Type</th>
+                    <th className="px-4 py-2 font-medium text-center">Established Type</th>
+                    <th className="px-4 py-2 font-medium text-center">Rounds ID</th>
+                    <th className="px-4 py-2 font-medium text-center">Entry Valuation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F3F4F6]">
+                  {positions.map(pos => (
+                    <tr key={pos.ownership_id} className="hover:bg-[#F9FAFB]">
+                      <td className="px-4 py-2 text-sm font-medium text-[#111827]">{pos.ownership_id}</td>
+                      <td className="px-4 py-2 text-sm text-[#374151]">{pos.project_id || <span className="text-[#D1D5DB]">&mdash;</span>}</td>
+                      <td className="px-4 py-2 text-sm text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <CompleteDot pct={(pos.filled_count / 4) * 100} />
+                          <span className="font-mono text-xs">{pos.filled_count}/4</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-center"><BoolDot value={pos.has_outcome_type} /></td>
+                      <td className="px-4 py-2 text-center"><BoolDot value={pos.has_established_type} /></td>
+                      <td className="px-4 py-2 text-center"><BoolDot value={pos.has_rounds_id} /></td>
+                      <td className="px-4 py-2 text-center"><BoolDot value={pos.has_entry_valuation} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
